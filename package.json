@@ -1,0 +1,53 @@
+{
+  "name": "cursor-agent-browser-cli",
+  "version": "1.0.0",
+  "description": "Click on any UI element → Type what you want → AI edits your code. Visual click-to-edit development for React apps powered by Cursor AI.",
+  "keywords": [
+    "cursor",
+    "ai",
+    "react",
+    "nextjs",
+    "developer-tools",
+    "code-editor",
+    "visual-editing",
+    "hot-reload",
+    "cursor-agent",
+    "react-grab"
+  ],
+  "author": "Diego Medina-Bernal",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dmbernaal/cursor-agent-browser-cli"
+  },
+  "homepage": "https://github.com/dmbernaal/cursor-agent-browser-cli#readme",
+  "exports": {
+    ".": "./index.tsx"
+  },
+  "bin": {
+    "cursor-bridge": "./server.js"
+  },
+  "files": [
+    "index.tsx",
+    "server.js",
+    "README.md"
+  ],
+  "dependencies": {
+    "body-parser": "^1.20.2",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "react-grab": "^0.0.54"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "@types/react": "^19.2.7",
+    "next": "^16.0.6",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
