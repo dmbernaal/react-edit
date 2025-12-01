@@ -86,6 +86,13 @@ interface StreamEvent {
   canRevert?: boolean;
 }
 
+interface RevisionStep {
+  sessionId: string;
+  instruction: string;
+  summary: string;
+  filesChanged: Array<{path: string; lines: number; isNew?: boolean}>;
+}
+
 // ============================================================================
 // UTILITIES
 // ============================================================================
@@ -374,6 +381,10 @@ export const CursorOverlay = () => {
   const [canRevert, setCanRevert] = useState(false);
   const [filesChanged, setFilesChanged] = useState<{path: string; lines: number; isNew?: boolean}[]>([]);
   const eventsContainerRef = useRef<HTMLDivElement>(null);
+  
+  // Revision history - tracks all edits in the current revision chain
+  const [revisionHistory, setRevisionHistory] = useState<RevisionStep[]>([]);
+  const currentInstructionRef = useRef<string>(''); // Track instruction at submit time
 
   // Settings state (persisted)
   const [model, setModel] = useState(() => getStoredValue('cursor-bridge-model', 'auto'));
@@ -515,6 +526,7 @@ export const CursorOverlay = () => {
     if (!target || !instruction.trim() || status === 'streaming') return;
     
     const userInstruction = instruction;
+    currentInstructionRef.current = userInstruction; // Track for revision history
     setStatus('streaming');
     setEvents([]);
     setCanRevert(false);
@@ -569,22 +581,31 @@ export const CursorOverlay = () => {
                 setStatus(data.success ? 'success' : 'error');
                 
                 // Store detailed files changed info
-                if (Array.isArray(data.filesChanged) && data.filesChanged.length > 0) {
+                const hasChanges = Array.isArray(data.filesChanged) && data.filesChanged.length > 0;
+                if (hasChanges) {
                   setFilesChanged(data.filesChanged);
                 } else {
                   setFilesChanged([]);
                 }
                 
-                // Add a result event to show what happened
-                const hasChanges = Array.isArray(data.filesChanged) && data.filesChanged.length > 0;
+                // Add to revision history if successful with changes
                 if (data.success && hasChanges) {
                   const fileCount = data.filesChanged.length;
                   const totalLines = data.filesChanged.reduce((sum: number, f: any) => sum + (f.lines || 0), 0);
+                  const summary = `Modified ${fileCount} file${fileCount > 1 ? 's' : ''} (${totalLines} lines)`;
+                  
+                  setRevisionHistory(prev => [...prev, {
+                    sessionId: data.sessionId,
+                    instruction: currentInstructionRef.current,
+                    summary,
+                    filesChanged: data.filesChanged
+                  }]);
+                  
                   setEvents(prev => [...prev, { 
                     id: eventId, 
                     type: 'result', 
                     success: true, 
-                    text: `Modified ${fileCount} file${fileCount > 1 ? 's' : ''} (${totalLines} lines)` 
+                    text: summary 
                   }]);
                 } else if (data.success && !hasChanges) {
                   setEvents(prev => [...prev, { 
@@ -642,6 +663,7 @@ export const CursorOverlay = () => {
         setAgentSessionId(null); // Clear for fresh start (undo means new attempt)
         setFilesChanged([]);
         setInstruction(""); // Clear instruction for fresh start
+        setRevisionHistory([]); // Clear revision chain - starting fresh
       }
     } catch (e: any) {
       setEvents(prev => [...prev, { 
@@ -659,14 +681,49 @@ export const CursorOverlay = () => {
 
   // Revise - keep panel open with agentSessionId for --resume
   const handleRevise = () => {
-    // Reset to input mode but preserve agentSessionId for continuation
+    // Reset to input mode but preserve agentSessionId and revisionHistory
     setStatus('idle');
     setEvents([]);
     setCanRevert(false);
     setSessionId(null);
     setFilesChanged([]);
-    // Keep instruction so user can modify it
+    setInstruction(''); // Clear for new revision input
     // Keep agentSessionId for --resume
+    // Keep revisionHistory to show what was done before
+  };
+
+  // Undo All - revert all revisions in the chain
+  const handleUndoAll = async () => {
+    if (revisionHistory.length === 0) return;
+    
+    try {
+      // Revert all sessions in reverse order (most recent first)
+      for (const step of [...revisionHistory].reverse()) {
+        await fetch('http://localhost:3333/revert', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId: step.sessionId })
+        });
+      }
+      
+      // Also revert the current session if it exists
+      if (sessionId) {
+        await fetch('http://localhost:3333/revert', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId })
+        });
+      }
+      
+      // Clear everything and close
+      closeChat();
+    } catch (e: any) {
+      setEvents(prev => [...prev, { 
+        id: `error-${Date.now()}`, 
+        type: 'error', 
+        text: 'Failed to undo all changes' 
+      }]);
+    }
   };
 
   // Close and reset
@@ -680,6 +737,7 @@ export const CursorOverlay = () => {
     setSessionId(null);
     setAgentSessionId(null); // Clear for fresh start
     setFilesChanged([]);
+    setRevisionHistory([]); // Clear revision chain
   };
 
   // Open prompt editor
@@ -809,6 +867,61 @@ export const CursorOverlay = () => {
             </div>
           </div>
 
+          {/* Revision History (shown when there are previous revisions) */}
+          {revisionHistory.length > 0 && (
+            <div style={{
+              padding: '12px 16px',
+              borderBottom: `1px solid ${colors.borderSubtle}`,
+              background: `${colors.surface}40`,
+            }}>
+              <div style={{ 
+                fontSize: '10px', 
+                textTransform: 'uppercase', 
+                letterSpacing: '0.5px',
+                color: colors.textTertiary,
+                marginBottom: '10px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+              }}>
+                <span style={{ color: colors.accent }}>⟲</span> Revision History
+              </div>
+              {revisionHistory.map((step, i) => (
+                <div key={step.sessionId} style={{
+                  marginBottom: i === revisionHistory.length - 1 ? '0' : '10px',
+                  paddingLeft: '12px',
+                  borderLeft: `2px solid ${colors.accent}40`,
+                }}>
+                  <div style={{
+                    fontSize: '12px',
+                    color: colors.textSecondary,
+                    marginBottom: '3px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                  }}>
+                    <span style={{ 
+                      color: colors.textTertiary,
+                      fontSize: '10px',
+                      fontWeight: 600,
+                    }}>#{i + 1}</span>
+                    <span style={{ color: colors.textPrimary }}>"{step.instruction}"</span>
+                  </div>
+                  <div style={{
+                    fontSize: '11px',
+                    color: colors.textTertiary,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                  }}>
+                    <span style={{ color: colors.success }}>✓</span>
+                    {step.summary}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* Events/Steps Area (shown when streaming or complete) */}
           {events.length > 0 && (
             <div 
@@ -907,24 +1020,47 @@ export const CursorOverlay = () => {
                 display: 'flex',
                 gap: '8px',
                 justifyContent: 'center',
+                flexWrap: 'wrap',
               }}>
                 {canRevert ? (
                   <>
+                    {/* Undo All - only shown when there are multiple revisions (2+) */}
+                    {revisionHistory.length > 1 && (
+                      <button
+                        onClick={handleUndoAll}
+                        style={{
+                          background: 'transparent',
+                          border: `1px solid ${colors.error}40`,
+                          borderRadius: '8px',
+                          padding: '10px 14px',
+                          color: colors.error,
+                          fontSize: '11px',
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                          transition: 'all 0.15s ease',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '5px',
+                        }}
+                      >
+                        <span>⟲</span> Undo All
+                      </button>
+                    )}
                     <button
                       onClick={handleRevert}
                       style={{
                         background: 'transparent',
                         border: `1px solid ${colors.textTertiary}`,
                         borderRadius: '8px',
-                        padding: '10px 16px',
+                        padding: '10px 14px',
                         color: colors.textSecondary,
-                        fontSize: '12px',
+                        fontSize: '11px',
                         fontWeight: 600,
                         cursor: 'pointer',
                         transition: 'all 0.15s ease',
                         display: 'flex',
                         alignItems: 'center',
-                        gap: '6px',
+                        gap: '5px',
                       }}
                     >
                       <span>↩</span> Undo
@@ -935,15 +1071,15 @@ export const CursorOverlay = () => {
                         background: 'transparent',
                         border: `1px solid ${colors.accent}`,
                         borderRadius: '8px',
-                        padding: '10px 16px',
+                        padding: '10px 14px',
                         color: colors.accent,
-                        fontSize: '12px',
+                        fontSize: '11px',
                         fontWeight: 600,
                         cursor: 'pointer',
                         transition: 'all 0.15s ease',
                         display: 'flex',
                         alignItems: 'center',
-                        gap: '6px',
+                        gap: '5px',
                       }}
                     >
                       <span>✎</span> Revise
@@ -954,15 +1090,15 @@ export const CursorOverlay = () => {
                         background: colors.success,
                         border: 'none',
                         borderRadius: '8px',
-                        padding: '10px 16px',
+                        padding: '10px 14px',
                         color: colors.void,
-                        fontSize: '12px',
+                        fontSize: '11px',
                         fontWeight: 600,
                         cursor: 'pointer',
                         boxShadow: `0 0 20px ${colors.successSoft}`,
                         display: 'flex',
                         alignItems: 'center',
-                        gap: '6px',
+                        gap: '5px',
                       }}
                     >
                       <span>✓</span> Accept
