@@ -371,6 +371,7 @@ export const CursorOverlay = () => {
   const [events, setEvents] = useState<StreamEvent[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [canRevert, setCanRevert] = useState(false);
+  const [filesChanged, setFilesChanged] = useState<{path: string; lines: number; isNew?: boolean}[]>([]);
   const eventsContainerRef = useRef<HTMLDivElement>(null);
 
   // Settings state (persisted)
@@ -563,15 +564,26 @@ export const CursorOverlay = () => {
                 setSessionId(data.sessionId);
                 setCanRevert(data.canRevert);
                 setStatus(data.success ? 'success' : 'error');
+                
+                // Store detailed files changed info
+                if (Array.isArray(data.filesChanged) && data.filesChanged.length > 0) {
+                  setFilesChanged(data.filesChanged);
+                } else {
+                  setFilesChanged([]);
+                }
+                
                 // Add a result event to show what happened
-                if (data.success && data.filesChanged) {
+                const hasChanges = Array.isArray(data.filesChanged) && data.filesChanged.length > 0;
+                if (data.success && hasChanges) {
+                  const fileCount = data.filesChanged.length;
+                  const totalLines = data.filesChanged.reduce((sum: number, f: any) => sum + (f.lines || 0), 0);
                   setEvents(prev => [...prev, { 
                     id: eventId, 
                     type: 'result', 
                     success: true, 
-                    text: 'Changes applied successfully' 
+                    text: `Modified ${fileCount} file${fileCount > 1 ? 's' : ''} (${totalLines} lines)` 
                   }]);
-                } else if (data.success && !data.filesChanged) {
+                } else if (data.success && !hasChanges) {
                   setEvents(prev => [...prev, { 
                     id: eventId, 
                     type: 'result', 
@@ -605,7 +617,7 @@ export const CursorOverlay = () => {
     }
   };
 
-  // Revert changes
+  // Revert changes - keeps panel open for another attempt
   const handleRevert = async () => {
     if (!sessionId) return;
     
@@ -619,13 +631,13 @@ export const CursorOverlay = () => {
       const data = await response.json();
       
       if (data.success) {
-        setEvents(prev => [...prev, { 
-          id: `revert-${Date.now()}`, 
-          type: 'result', 
-          success: true, 
-          text: 'Changes reverted' 
-        }]);
+        // Reset to idle state for another attempt (don't close panel)
+        setStatus('idle');
+        setEvents([]);
         setCanRevert(false);
+        setSessionId(null);
+        setFilesChanged([]);
+        setInstruction(""); // Clear instruction for fresh start
       }
     } catch (e: any) {
       setEvents(prev => [...prev, { 
@@ -650,6 +662,7 @@ export const CursorOverlay = () => {
     setEvents([]);
     setCanRevert(false);
     setSessionId(null);
+    setFilesChanged([]);
   };
 
   // Open prompt editor
@@ -824,67 +837,119 @@ export const CursorOverlay = () => {
             </div>
           )}
 
-          {/* Success/Error Actions */}
+          {/* Revision Summary + Actions */}
           {isComplete && (
             <div style={{ 
               padding: '16px',
-              display: 'flex',
-              gap: '8px',
-              justifyContent: 'center',
               flexShrink: 0,
             }}>
-              {canRevert ? (
-                <>
+              {/* Files Changed Summary */}
+              {canRevert && filesChanged.length > 0 && (
+                <div style={{
+                  marginBottom: '12px',
+                  padding: '10px 12px',
+                  background: colors.elevated,
+                  borderRadius: '8px',
+                  border: `1px solid ${colors.borderSubtle}`,
+                }}>
+                  <div style={{ 
+                    fontSize: '10px', 
+                    color: colors.textTertiary, 
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.5px',
+                    marginBottom: '8px'
+                  }}>
+                    Files Modified
+                  </div>
+                  {filesChanged.map((file, i) => (
+                    <div key={i} style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      fontSize: '11px',
+                      fontFamily: 'ui-monospace, monospace',
+                      color: colors.textSecondary,
+                      padding: '4px 0',
+                    }}>
+                      <span style={{ color: colors.success }}>
+                        {file.isNew ? '+' : '~'}
+                      </span>
+                      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {file.path}
+                      </span>
+                      <span style={{ color: colors.textTertiary, fontSize: '10px' }}>
+                        {file.lines} lines
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              
+              {/* Action Buttons */}
+              <div style={{ 
+                display: 'flex',
+                gap: '8px',
+                justifyContent: 'center',
+              }}>
+                {canRevert ? (
+                  <>
+                    <button
+                      onClick={handleRevert}
+                      style={{
+                        background: 'transparent',
+                        border: `1px solid ${colors.textTertiary}`,
+                        borderRadius: '8px',
+                        padding: '10px 20px',
+                        color: colors.textSecondary,
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                      }}
+                    >
+                      <span>↩</span> Undo
+                    </button>
+                    <button
+                      onClick={handleKeep}
+                      style={{
+                        background: colors.success,
+                        border: 'none',
+                        borderRadius: '8px',
+                        padding: '10px 20px',
+                        color: colors.void,
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        boxShadow: `0 0 20px ${colors.successSoft}`,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                      }}
+                    >
+                      <span>✓</span> Accept
+                    </button>
+                  </>
+                ) : (
                   <button
-                    onClick={handleRevert}
+                    onClick={closeChat}
                     style={{
-                      background: 'transparent',
-                      border: `1px solid ${colors.error}`,
-                      borderRadius: '8px',
-                      padding: '10px 20px',
-                      color: colors.error,
-                      fontSize: '12px',
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      transition: 'all 0.15s ease',
-                    }}
-                  >
-                    Revert
-                  </button>
-                  <button
-                    onClick={handleKeep}
-                    style={{
-                      background: colors.success,
+                      background: status === 'error' ? colors.error : colors.textTertiary,
                       border: 'none',
                       borderRadius: '8px',
-                      padding: '10px 20px',
+                      padding: '10px 24px',
                       color: colors.void,
                       fontSize: '12px',
                       fontWeight: 600,
                       cursor: 'pointer',
-                      boxShadow: `0 0 20px ${colors.successSoft}`,
                     }}
                   >
-                    Keep Changes
+                    {status === 'error' ? 'Close' : 'Done'}
                   </button>
-                </>
-              ) : (
-                <button
-                  onClick={closeChat}
-                  style={{
-                    background: status === 'error' ? colors.error : colors.textTertiary,
-                    border: 'none',
-                    borderRadius: '8px',
-                    padding: '10px 24px',
-                    color: colors.void,
-                    fontSize: '12px',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                  }}
-                >
-                  {status === 'error' ? 'Close' : 'Done'}
-                </button>
-              )}
+                )}
+              </div>
             </div>
           )}
 

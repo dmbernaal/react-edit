@@ -185,6 +185,7 @@ const runCursorAgentStream = (prompt, cwd, options, onEvent, onComplete, onError
 
   let buffer = '';
   const fileWrites = []; // Track file writes for revert
+  const fileWriteDetails = {}; // Track detailed info about each write (path -> {lines, size})
 
   child.stdout.on('data', (data) => {
     buffer += data.toString();
@@ -199,17 +200,51 @@ const runCursorAgentStream = (prompt, cwd, options, onEvent, onComplete, onError
       try {
         const event = JSON.parse(line);
         
-        // Track file writes for revert capability
+        // Track file writes/edits for revert capability
         if (event.type === 'tool_call' && event.subtype === 'started') {
-          if (event.tool_call?.writeToolCall?.args?.path) {
-            const writePath = event.tool_call.writeToolCall.args.path;
+          log('[debug] tool_call started:', JSON.stringify(event.tool_call).substring(0, 200));
+          
+          // Check for writeToolCall OR editToolCall (cursor-agent uses both)
+          const toolCall = event.tool_call?.writeToolCall || event.tool_call?.editToolCall;
+          if (toolCall?.args?.path) {
+            const writePath = toolCall.args.path;
             const fullPath = path.isAbsolute(writePath) ? writePath : path.join(cwd, writePath);
             
-            // Store original content before write
-            if (fs.existsSync(fullPath)) {
-              const originalContent = fs.readFileSync(fullPath, 'utf-8');
-              fileWrites.push({ path: fullPath, original: originalContent, relativePath: writePath });
+            // Only track if not already tracked
+            if (!fileWrites.some(fw => fw.relativePath === writePath)) {
+              log('[debug] Tracking write to:', writePath);
+              
+              // Store original content before write
+              if (fs.existsSync(fullPath)) {
+                const originalContent = fs.readFileSync(fullPath, 'utf-8');
+                fileWrites.push({ path: fullPath, original: originalContent, relativePath: writePath });
+                log('[debug] Stored original content for:', writePath);
+              } else {
+                // New file being created
+                fileWrites.push({ path: fullPath, original: null, relativePath: writePath, isNew: true });
+                log('[debug] New file will be created:', writePath);
+              }
             }
+          }
+        }
+        
+        // Track file write/edit completion details
+        if (event.type === 'tool_call' && event.subtype === 'completed') {
+          log('[debug] tool_call completed:', JSON.stringify(event.tool_call).substring(0, 200));
+          
+          // Check for writeToolCall OR editToolCall
+          const writeResult = event.tool_call?.writeToolCall?.result?.success;
+          const editResult = event.tool_call?.editToolCall?.result?.success;
+          const result = writeResult || editResult;
+          const toolCall = event.tool_call?.writeToolCall || event.tool_call?.editToolCall;
+          
+          if (result && toolCall?.args?.path) {
+            const writePath = toolCall.args.path;
+            fileWriteDetails[writePath] = {
+              lines: result.linesAdded || result.linesCreated || 0,
+              size: result.fileSize || 0
+            };
+            log('[debug] Write completed:', writePath, fileWriteDetails[writePath]);
           }
         }
         
@@ -243,7 +278,7 @@ const runCursorAgentStream = (prompt, cwd, options, onEvent, onComplete, onError
     }
     
     console.log(code === 0 ? '[done] ✓' : `[done] exit ${code}`);
-    onComplete(code === 0, fileWrites, stderrBuffer.trim());
+    onComplete(code === 0, fileWrites, fileWriteDetails, stderrBuffer.trim());
   });
 
   child.on('error', (err) => {
@@ -388,11 +423,12 @@ app.post('/cursor-command-stream', async (req, res) => {
               status: 'started',
               path: tc.readToolCall.args.path 
             });
-          } else if (tc.writeToolCall) {
+          } else if (tc.writeToolCall || tc.editToolCall) {
+            const toolCall = tc.writeToolCall || tc.editToolCall;
             sendEvent('tool', { 
               action: 'write', 
               status: 'started',
-              path: tc.writeToolCall.args.path 
+              path: toolCall.args.path 
             });
           } else if (tc.function) {
             sendEvent('tool', { 
@@ -409,13 +445,15 @@ app.post('/cursor-command-stream', async (req, res) => {
               path: tc.readToolCall.args.path,
               lines: tc.readToolCall.result.success.totalLines
             });
-          } else if (tc.writeToolCall?.result?.success) {
+          } else if (tc.writeToolCall?.result?.success || tc.editToolCall?.result?.success) {
+            const toolCall = tc.writeToolCall || tc.editToolCall;
+            const result = toolCall.result.success;
             sendEvent('tool', { 
               action: 'write', 
               status: 'completed',
-              path: tc.writeToolCall.args.path,
-              lines: tc.writeToolCall.result.success.linesCreated,
-              size: tc.writeToolCall.result.success.fileSize
+              path: toolCall.args.path,
+              lines: result.linesAdded || result.linesCreated || 0,
+              size: result.fileSize || 0
             });
           }
         }
@@ -429,7 +467,9 @@ app.post('/cursor-command-stream', async (req, res) => {
       }
     },
     // On complete
-    (success, fileWrites, stderrOutput) => {
+    (success, fileWrites, fileWriteDetails, stderrOutput) => {
+      log('[debug] Complete - fileWrites:', fileWrites.length, 'success:', success);
+      
       // Update revert store with any additional file writes
       const stored = revertStore.get(sessionId);
       if (stored && fileWrites.length > 0) {
@@ -443,15 +483,26 @@ app.post('/cursor-command-stream', async (req, res) => {
         sendEvent('error', { message: stderrOutput });
       }
       
+      // Build detailed files changed array
+      const filesChangedList = fileWrites.map(fw => ({
+        path: fw.relativePath,
+        isNew: fw.isNew || false,
+        lines: fileWriteDetails[fw.relativePath]?.lines || 0,
+        size: fileWriteDetails[fw.relativePath]?.size || 0
+      }));
+      
+      log('[debug] filesChangedList:', filesChangedList.length, 'files');
+      
       // Determine if changes were actually made
-      const filesChanged = fileWrites.length > 0;
-      const canRevert = filesChanged && success;
+      const hasChanges = fileWrites.length > 0;
+      const canRevert = hasChanges && success;
+      log('[debug] hasChanges:', hasChanges, 'canRevert:', canRevert);
       
       sendEvent('complete', { 
         success: success && !stderrOutput?.includes('Cannot use this model'),
         sessionId,
         canRevert,
-        filesChanged,
+        filesChanged: filesChangedList, // Now an array with details
         errorMessage: !success ? (stderrOutput || 'Command failed') : null
       });
       res.end();
