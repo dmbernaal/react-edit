@@ -5,6 +5,7 @@ const bodyParser = require('body-parser');
 const { spawn, exec } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const Diff = require('diff');
 
 const app = express();
 app.use(cors());
@@ -582,6 +583,56 @@ app.post('/revert', async (req, res) => {
     res.json({ success: true, reverted });
   } catch (error) {
     console.log(`[revert] Error: ${error.message}`);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ============================================================================
+// DIFF ENDPOINT - Returns computed diff using the 'diff' library
+// ============================================================================
+
+app.post('/diff', async (req, res) => {
+  const { sessionId } = req.body;
+  
+  log(`[diff] Request for session: ${sessionId}`);
+  
+  const stored = revertStore.get(sessionId);
+  if (!stored) {
+    return res.status(404).json({ success: false, error: 'Session not found or expired' });
+  }
+  
+  try {
+    const diffs = [];
+    for (const file of stored.files) {
+      let currentContent = '';
+      if (fs.existsSync(file.path)) {
+        currentContent = fs.readFileSync(file.path, 'utf-8');
+      }
+      
+      // Use diff library to compute line-by-line diff
+      const changes = Diff.diffLines(file.original, currentContent);
+      
+      // Format changes for the client
+      // Each change has: value (string), added (bool), removed (bool)
+      const formattedChanges = changes.map(change => ({
+        value: change.value,
+        added: change.added || false,
+        removed: change.removed || false,
+      }));
+      
+      diffs.push({
+        path: file.relativePath,
+        changes: formattedChanges,
+        stats: {
+          additions: changes.filter(c => c.added).reduce((sum, c) => sum + c.value.split('\n').filter(l => l).length, 0),
+          deletions: changes.filter(c => c.removed).reduce((sum, c) => sum + c.value.split('\n').filter(l => l).length, 0),
+        }
+      });
+    }
+    
+    res.json({ success: true, diffs });
+  } catch (error) {
+    console.log(`[diff] Error: ${error.message}`);
     res.status(500).json({ success: false, error: error.message });
   }
 });

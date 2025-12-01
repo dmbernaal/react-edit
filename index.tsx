@@ -93,6 +93,21 @@ interface RevisionStep {
   filesChanged: Array<{path: string; lines: number; isNew?: boolean}>;
 }
 
+interface DiffChange {
+  value: string;
+  added: boolean;
+  removed: boolean;
+}
+
+interface FileDiff {
+  path: string;
+  changes: DiffChange[];
+  stats: {
+    additions: number;
+    deletions: number;
+  };
+}
+
 // ============================================================================
 // UTILITIES
 // ============================================================================
@@ -399,6 +414,12 @@ export const CursorOverlay = () => {
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const dragRef = useRef<{ startX: number; startY: number; initialX: number; initialY: number } | null>(null);
+  
+  // Diff panel state
+  const [showDiffPanel, setShowDiffPanel] = useState(false);
+  const [diffData, setDiffData] = useState<FileDiff[]>([]);
+  const [diffLoading, setDiffLoading] = useState(false);
+  const [activeDiffFile, setActiveDiffFile] = useState(0);
 
   // Persist settings
   useEffect(() => { setStoredValue('cursor-bridge-model', model); }, [model]);
@@ -738,6 +759,50 @@ export const CursorOverlay = () => {
     setAgentSessionId(null); // Clear for fresh start
     setFilesChanged([]);
     setRevisionHistory([]); // Clear revision chain
+    setShowDiffPanel(false);
+    setDiffData([]);
+  };
+
+  // Fetch and show diff
+  const handleViewDiff = async () => {
+    if (!sessionId) return;
+    
+    setDiffLoading(true);
+    try {
+      const response = await fetch('http://localhost:3333/diff', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId })
+      });
+      
+      const data = await response.json();
+      if (data.success && data.diffs.length > 0) {
+        setDiffData(data.diffs);
+        setActiveDiffFile(0);
+        setShowDiffPanel(true);
+      }
+    } catch (e) {
+      console.error('Failed to fetch diff:', e);
+    } finally {
+      setDiffLoading(false);
+    }
+  };
+
+  // Close diff panel
+  const closeDiffPanel = () => {
+    setShowDiffPanel(false);
+  };
+
+  // Accept changes from diff panel
+  const handleAcceptFromDiff = () => {
+    setShowDiffPanel(false);
+    handleKeep();
+  };
+
+  // Reject changes from diff panel (revert)
+  const handleRejectFromDiff = async () => {
+    setShowDiffPanel(false);
+    await handleRevert();
   };
 
   // Open prompt editor
@@ -873,6 +938,8 @@ export const CursorOverlay = () => {
               padding: '12px 16px',
               borderBottom: `1px solid ${colors.borderSubtle}`,
               background: `${colors.surface}40`,
+              maxHeight: '120px',
+              overflowY: 'auto',
             }}>
               <div style={{ 
                 fontSize: '10px', 
@@ -883,42 +950,60 @@ export const CursorOverlay = () => {
                 display: 'flex',
                 alignItems: 'center',
                 gap: '6px',
+                position: 'sticky',
+                top: 0,
+                background: `${colors.surface}`,
+                padding: '2px 0',
+                zIndex: 1,
               }}>
-                <span style={{ color: colors.accent }}>⟲</span> Revision History
+                <span style={{ color: colors.accent }}>⟲</span> Revision History ({revisionHistory.length})
               </div>
-              {revisionHistory.map((step, i) => (
-                <div key={step.sessionId} style={{
-                  marginBottom: i === revisionHistory.length - 1 ? '0' : '10px',
-                  paddingLeft: '12px',
-                  borderLeft: `2px solid ${colors.accent}40`,
-                }}>
-                  <div style={{
-                    fontSize: '12px',
-                    color: colors.textSecondary,
-                    marginBottom: '3px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
+              {revisionHistory.map((step, i) => {
+                // Truncate long instructions
+                const truncatedInstruction = step.instruction.length > 80 
+                  ? step.instruction.substring(0, 80) + '...' 
+                  : step.instruction;
+                
+                return (
+                  <div key={step.sessionId} style={{
+                    marginBottom: i === revisionHistory.length - 1 ? '0' : '10px',
+                    paddingLeft: '12px',
+                    borderLeft: `2px solid ${colors.accent}40`,
                   }}>
-                    <span style={{ 
-                      color: colors.textTertiary,
+                    <div style={{
+                      fontSize: '11px',
+                      color: colors.textSecondary,
+                      marginBottom: '3px',
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: '6px',
+                    }}>
+                      <span style={{ 
+                        color: colors.textTertiary,
+                        fontSize: '10px',
+                        fontWeight: 600,
+                        flexShrink: 0,
+                      }}>#{i + 1}</span>
+                      <span style={{ 
+                        color: colors.textPrimary,
+                        wordBreak: 'break-word',
+                        lineHeight: 1.4,
+                      }}>"{truncatedInstruction}"</span>
+                    </div>
+                    <div style={{
                       fontSize: '10px',
-                      fontWeight: 600,
-                    }}>#{i + 1}</span>
-                    <span style={{ color: colors.textPrimary }}>"{step.instruction}"</span>
+                      color: colors.textTertiary,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      marginLeft: '20px',
+                    }}>
+                      <span style={{ color: colors.success }}>✓</span>
+                      {step.summary}
+                    </div>
                   </div>
-                  <div style={{
-                    fontSize: '11px',
-                    color: colors.textTertiary,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '4px',
-                  }}>
-                    <span style={{ color: colors.success }}>✓</span>
-                    {step.summary}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
@@ -983,13 +1068,38 @@ export const CursorOverlay = () => {
                   border: `1px solid ${colors.borderSubtle}`,
                 }}>
                   <div style={{ 
-                    fontSize: '10px', 
-                    color: colors.textTertiary, 
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.5px',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
                     marginBottom: '8px'
                   }}>
-                    Files Modified
+                    <div style={{ 
+                      fontSize: '10px', 
+                      color: colors.textTertiary, 
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.5px',
+                    }}>
+                      Files Modified
+                    </div>
+                    <button
+                      onClick={handleViewDiff}
+                      disabled={diffLoading}
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        padding: '2px 6px',
+                        color: colors.accent,
+                        fontSize: '10px',
+                        fontWeight: 500,
+                        cursor: diffLoading ? 'wait' : 'pointer',
+                        opacity: diffLoading ? 0.5 : 1,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                      }}
+                    >
+                      <span>◐</span> {diffLoading ? 'Loading...' : 'View Diff'}
+                    </button>
                   </div>
                   {filesChanged.map((file, i) => (
                     <div key={i} style={{
@@ -1246,6 +1356,244 @@ export const CursorOverlay = () => {
             }}>
               <button onClick={() => setShowPromptEditor(false)} style={{ background: 'transparent', border: `1px solid ${colors.borderDefault}`, borderRadius: '8px', padding: '8px 16px', color: colors.textSecondary, fontSize: '12px', cursor: 'pointer' }}>Cancel</button>
               <button onClick={saveCustomPrompt} style={{ background: colors.textPrimary, border: 'none', borderRadius: '8px', padding: '8px 16px', color: colors.void, fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>Save</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Diff Panel Modal */}
+      {showDiffPanel && diffData.length > 0 && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 100001,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: 'rgba(0,0,0,0.9)',
+          backdropFilter: 'blur(8px)',
+        }} onClick={closeDiffPanel}>
+          <div 
+            onClick={e => e.stopPropagation()}
+            style={{
+              width: '90vw',
+              height: '90vh',
+              background: colors.void,
+              border: `1px solid ${colors.borderDefault}`,
+              borderRadius: '16px',
+              boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.05), 0 40px 100px rgba(0,0,0,0.8)',
+              overflow: 'hidden',
+              display: 'flex',
+              flexDirection: 'column',
+            }}
+          >
+            {/* Header */}
+            <div style={{
+              padding: '16px 24px',
+              borderBottom: `1px solid ${colors.borderSubtle}`,
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              background: colors.surface,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                <span style={{ color: colors.textPrimary, fontSize: '14px', fontWeight: 600 }}>
+                  Diff Preview
+                </span>
+                {/* File tabs */}
+                <div style={{ display: 'flex', gap: '4px' }}>
+                  {diffData.map((file, i) => (
+                    <button
+                      key={file.path}
+                      onClick={() => setActiveDiffFile(i)}
+                      style={{
+                        background: activeDiffFile === i ? colors.accent + '20' : 'transparent',
+                        border: `1px solid ${activeDiffFile === i ? colors.accent : colors.borderSubtle}`,
+                        borderRadius: '6px',
+                        padding: '4px 10px',
+                        color: activeDiffFile === i ? colors.accent : colors.textSecondary,
+                        fontSize: '11px',
+                        fontFamily: 'ui-monospace, monospace',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {file.path}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <button 
+                onClick={closeDiffPanel} 
+                style={{ 
+                  background: 'transparent', 
+                  border: 'none', 
+                  color: colors.textTertiary, 
+                  fontSize: '20px', 
+                  cursor: 'pointer',
+                  padding: '4px 8px',
+                }}
+              >
+                ×
+              </button>
+            </div>
+
+            {/* Diff Content - Unified View */}
+            <div style={{ 
+              flex: 1, 
+              overflow: 'auto',
+              fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace',
+              fontSize: '12px',
+              lineHeight: 1.5,
+            }}>
+              {(() => {
+                const changes = diffData[activeDiffFile]?.changes || [];
+                let lineNum = 1;
+                
+                return changes.map((change, changeIdx) => {
+                  const lines = change.value.split('\n');
+                  // Remove last empty line from split if value ends with \n
+                  if (lines[lines.length - 1] === '') lines.pop();
+                  
+                  return lines.map((line, lineIdx) => {
+                    const currentLineNum = change.removed ? null : lineNum++;
+                    if (change.added) lineNum--; // Don't increment for first render of added
+                    if (!change.removed && !change.added) {
+                      // unchanged line
+                    }
+                    
+                    const isAdded = change.added;
+                    const isRemoved = change.removed;
+                    
+                    return (
+                      <div 
+                        key={`${changeIdx}-${lineIdx}`}
+                        style={{
+                          display: 'flex',
+                          background: isRemoved 
+                            ? 'rgba(248, 81, 73, 0.15)' 
+                            : isAdded 
+                              ? 'rgba(63, 185, 80, 0.15)' 
+                              : 'transparent',
+                          borderLeft: isRemoved 
+                            ? '3px solid #f85149' 
+                            : isAdded 
+                              ? '3px solid #3fb950' 
+                              : '3px solid transparent',
+                        }}
+                      >
+                        {/* Line indicator */}
+                        <span style={{
+                          width: '24px',
+                          padding: '0 8px',
+                          textAlign: 'center',
+                          color: isRemoved ? '#f85149' : isAdded ? '#3fb950' : colors.textTertiary,
+                          fontWeight: 600,
+                          flexShrink: 0,
+                          userSelect: 'none',
+                        }}>
+                          {isRemoved ? '−' : isAdded ? '+' : ' '}
+                        </span>
+                        
+                        {/* Line number gutter */}
+                        <span style={{
+                          width: '50px',
+                          padding: '0 8px',
+                          textAlign: 'right',
+                          color: colors.textTertiary,
+                          background: isRemoved 
+                            ? 'rgba(248, 81, 73, 0.1)' 
+                            : isAdded 
+                              ? 'rgba(63, 185, 80, 0.1)' 
+                              : colors.surface,
+                          borderRight: `1px solid ${colors.borderSubtle}`,
+                          flexShrink: 0,
+                          userSelect: 'none',
+                          fontSize: '11px',
+                        }}>
+                          {!isRemoved ? (lineNum - (isAdded ? 0 : 1)) : ''}
+                        </span>
+                        
+                        {/* Code content */}
+                        <pre style={{
+                          margin: 0,
+                          padding: '0 16px',
+                          flex: 1,
+                          color: isRemoved 
+                            ? '#f85149' 
+                            : isAdded 
+                              ? '#3fb950' 
+                              : colors.textSecondary,
+                          whiteSpace: 'pre',
+                          overflow: 'visible',
+                        }}>
+                          {line || ' '}
+                        </pre>
+                      </div>
+                    );
+                  });
+                });
+              })()}
+            </div>
+
+            {/* Footer with actions */}
+            <div style={{
+              padding: '16px 24px',
+              borderTop: `1px solid ${colors.borderSubtle}`,
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              background: colors.surface,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '12px' }}>
+                <span style={{ color: '#3fb950', fontWeight: 600 }}>
+                  +{diffData[activeDiffFile]?.stats?.additions || 0}
+                </span>
+                <span style={{ color: '#f85149', fontWeight: 600 }}>
+                  −{diffData[activeDiffFile]?.stats?.deletions || 0}
+                </span>
+                <span style={{ color: colors.textTertiary, fontSize: '11px' }}>
+                  {diffData[activeDiffFile]?.changes?.length || 0} changes
+                </span>
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button
+                  onClick={handleRejectFromDiff}
+                  style={{
+                    background: 'transparent',
+                    border: `1px solid ${colors.error}60`,
+                    borderRadius: '8px',
+                    padding: '10px 20px',
+                    color: colors.error,
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                  }}
+                >
+                  <span>✕</span> Reject Changes
+                </button>
+                <button
+                  onClick={handleAcceptFromDiff}
+                  style={{
+                    background: colors.success,
+                    border: 'none',
+                    borderRadius: '8px',
+                    padding: '10px 20px',
+                    color: colors.void,
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    boxShadow: `0 0 20px ${colors.successSoft}`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                  }}
+                >
+                  <span>✓</span> Accept Changes
+                </button>
+              </div>
             </div>
           </div>
         </div>
