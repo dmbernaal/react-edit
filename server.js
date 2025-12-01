@@ -11,6 +11,8 @@ app.use(cors());
 app.use(bodyParser.json());
 
 const PORT = 3333;
+const DEBUG = process.env.DEBUG === 'true' || process.env.CURSOR_BRIDGE_DEBUG === 'true';
+const log = (...args) => DEBUG && console.log(...args);
 
 // Store for reverts (in-memory, keyed by session)
 const revertStore = new Map();
@@ -173,7 +175,7 @@ const runCursorAgentStream = (prompt, cwd, options, onEvent, onComplete, onError
     args.push('--resume', options.chatId);
   }
 
-  console.log(`[stream] Starting: cursor-agent ${args.join(' ')}`);
+  log(`[stream] Starting: cursor-agent ${args.join(' ')}`);
 
   // Use spawn for streaming
   const child = spawn('sh', ['-c', `cat "${tempFile}" | "${cursorAgentPath}" ${args.join(' ')}`], {
@@ -222,8 +224,10 @@ const runCursorAgentStream = (prompt, cwd, options, onEvent, onComplete, onError
   
   child.stderr.on('data', (data) => {
     const text = data.toString().trim();
-    console.log(`[stream] stderr: ${text}`);
-    stderrBuffer += text + '\n';
+    if (text) {
+      console.log(`[stderr] ${text}`);  // Always show errors
+      stderrBuffer += text + '\n';
+    }
   });
 
   child.on('close', (code) => {
@@ -238,7 +242,7 @@ const runCursorAgentStream = (prompt, cwd, options, onEvent, onComplete, onError
       } catch (e) {}
     }
     
-    console.log(`[stream] Completed with code ${code}`);
+    console.log(code === 0 ? '[done] ✓' : `[done] exit ${code}`);
     onComplete(code === 0, fileWrites, stderrBuffer.trim());
   });
 
@@ -304,11 +308,14 @@ app.post('/cursor-command-stream', async (req, res) => {
   const fullFilePath = path.join(projectRoot, cleanedPath);
   const sessionId = `session-${Date.now()}`;
 
-  console.log(`[target] ${cleanedPath}:${lineNumber || '~'} <${component}>`);
-  console.log(`[element] <${elementTag}> classes: "${elementClasses?.substring(0, 100)}${elementClasses?.length > 100 ? '...' : ''}"`);
-  console.log(`[context] ${parentContext || 'no parent context'}`);
-  console.log(`[model] ${model}`);
+  // Essential logging (always shown)
+  console.log(`[target] ${cleanedPath} <${elementTag}>`);
   console.log(`[task] ${instruction}`);
+  
+  // Verbose logging (DEBUG mode only)
+  log(`[element] classes: "${elementClasses?.substring(0, 100)}${elementClasses?.length > 100 ? '...' : ''}"`);
+  log(`[context] ${parentContext || 'none'}`);
+  log(`[model] ${model}`);
 
   // Check file exists and store original for revert
   if (!fs.existsSync(fullFilePath)) {
@@ -347,10 +354,13 @@ app.post('/cursor-command-stream', async (req, res) => {
     parentContext: parentContext || ''
   });
 
-  console.log('[prompt]');
-  console.log('─'.repeat(40));
-  console.log(prompt);
-  console.log('─'.repeat(40));
+  // Full prompt (DEBUG mode only)
+  if (DEBUG) {
+    console.log('[prompt]');
+    console.log('─'.repeat(40));
+    console.log(prompt);
+    console.log('─'.repeat(40));
+  }
 
   // Run cursor-agent with streaming
   runCursorAgentStream(
@@ -455,7 +465,7 @@ app.post('/cursor-command-stream', async (req, res) => {
 
   // Handle client disconnect
   req.on('close', () => {
-    console.log('[stream] Client disconnected');
+    log('[stream] Client disconnected');
   });
 });
 
@@ -604,16 +614,13 @@ app.get('/health', (req, res) => {
 // ============================================================================
 
 app.listen(PORT, () => {
-  console.log('─'.repeat(60));
-  console.log('CURSOR BRIDGE v2.0 (Streaming)');
-  console.log('─'.repeat(60));
+  console.log('─'.repeat(50));
+  console.log('CURSOR BRIDGE v2.0');
+  console.log('─'.repeat(50));
   console.log(`Server:  http://localhost:${PORT}`);
   console.log(`Project: ${process.cwd()}`);
-  console.log('Endpoints:');
-  console.log('  POST /cursor-command-stream  (SSE streaming)');
-  console.log('  POST /cursor-command         (legacy)');
-  console.log('  POST /revert                 (undo changes)');
-  console.log('─'.repeat(60));
-  console.log('Ready. Waiting for requests...');
-  console.log('─'.repeat(60) + '\n');
+  if (DEBUG) console.log('Debug:   ENABLED (verbose logging)');
+  console.log('─'.repeat(50));
+  console.log('Ready. Tip: DEBUG=true npx cursor-bridge');
+  console.log('─'.repeat(50) + '\n');
 });

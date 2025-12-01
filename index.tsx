@@ -3,6 +3,12 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { init, getStack, getFileName } from 'react-grab/core';
 
 // ============================================================================
+// DEBUG MODE - Set to true to enable verbose console logging
+// ============================================================================
+const DEBUG = process.env.NODE_ENV === 'development';
+const log = (...args: any[]) => DEBUG && console.log(...args);
+
+// ============================================================================
 // CONSTANTS
 // ============================================================================
 
@@ -400,7 +406,7 @@ export const CursorOverlay = () => {
     const api = init({
       theme: { enabled: true, hue: 270, elementLabel: { backgroundColor: colors.surface, textColor: colors.textPrimary }},
       onElementSelect: async (element: Element) => {
-        console.log("🔍 Selected element:", element);
+        log("🔍 Selected element:", element);
         
         const stack = await getStack(element);
         const rawFileName = getFileName(stack);
@@ -412,10 +418,8 @@ export const CursorOverlay = () => {
         
         // Capture FULL element details - this is what cursor-agent needs!
         const elementTag = element.tagName.toLowerCase();
-        const elementClasses = element.className || ''; // FULL class string
+        const elementClasses = element.className || '';
         const elementText = element.textContent?.trim().substring(0, 100) || '';
-        
-        // Get the element's outerHTML (truncated) - this is the EXACT element
         const elementHTML = element.outerHTML.length > 500 
           ? element.outerHTML.substring(0, 500) + '...'
           : element.outerHTML;
@@ -424,23 +428,20 @@ export const CursorOverlay = () => {
         const parentContext = stack
           .slice(0, 6)
           .map(frame => frame.name)
-          .filter((name, i, arr) => name && arr.indexOf(name) === i) // unique names
+          .filter((name, i, arr) => name && arr.indexOf(name) === i)
           .join(' → ');
         
-        console.log("📚 Stack:", stack);
-        console.log("📂 Raw file:", rawFileName);
-        console.log("📂 Cleaned file:", fileName, "Line:", lineNumber, "(may be bundled code line)");
-        console.log("🏷️ Component:", componentName);
-        console.log("📝 Element text:", elementText || "(empty)");
-        console.log("🎨 Element classes:", elementClasses);
-        console.log("📄 Element HTML:", elementHTML);
-        console.log("🌳 Parent context:", parentContext);
+        log("📚 Stack:", stack);
+        log("📂 Raw file:", rawFileName);
+        log("📂 Cleaned file:", fileName, "Line:", lineNumber);
+        log("🏷️ Component:", componentName);
+        log("🎨 Classes:", elementClasses.substring(0, 80) + (elementClasses.length > 80 ? '...' : ''));
+        log("🌳 Context:", parentContext);
         
         if (!fileName) {
-          console.log("🖥️ No source info found - using route-based fallback");
+          log("🖥️ No source info - using route fallback");
           fileName = inferFileFromRoute();
           lineNumber = 0;
-          console.log("📂 Inferred file from route:", fileName);
         }
         
         setTarget({ fileName, lineNumber, componentName, elementText, elementTag, elementClasses, elementHTML, parentContext });
@@ -675,16 +676,16 @@ export const CursorOverlay = () => {
 
   return (
     <>
-      {/* Enable Agent Button (always visible) */}
+      {/* Enable Agent Button (hidden but functional - react-grab uses CMD+C to activate) */}
       <div 
         onClick={toggleInspector}
         style={{
+          display: 'none', // Hidden - use CMD+C to activate react-grab
           position: 'fixed',
           bottom: '20px',
           right: '20px',
           zIndex: 99999,
           cursor: 'pointer',
-          display: 'flex',
           alignItems: 'center',
           gap: '10px',
           background: inspectorActive ? colors.success : colors.surface,
