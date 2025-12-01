@@ -93,6 +93,17 @@ interface RevisionStep {
   filesChanged: Array<{path: string; lines: number; isNew?: boolean}>;
 }
 
+interface Target {
+  fileName: string;
+  lineNumber: number;
+  componentName: string;
+  elementText: string;
+  elementTag: string;
+  elementClasses: string;
+  elementHTML: string;
+  parentContext: string;
+}
+
 interface DiffChange {
   value: string;
   added: boolean;
@@ -384,7 +395,7 @@ export const CursorOverlay = () => {
   const [mounted, setMounted] = useState(false);
   const [active, setActive] = useState(false);
   const [inspectorActive, setInspectorActive] = useState(false);
-  const [target, setTarget] = useState<any>(null);
+  const [targets, setTargets] = useState<Target[]>([]); // Multi-select support
   const [instruction, setInstruction] = useState("");
   const [status, setStatus] = useState<'idle' | 'streaming' | 'success' | 'error'>('idle');
   const [grabApi, setGrabApi] = useState<any>(null);
@@ -400,6 +411,7 @@ export const CursorOverlay = () => {
   // Revision history - tracks all edits in the current revision chain
   const [revisionHistory, setRevisionHistory] = useState<RevisionStep[]>([]);
   const currentInstructionRef = useRef<string>(''); // Track instruction at submit time
+  const targetsRef = useRef<Target[]>([]); // Ref to access current targets in callbacks
 
   // Settings state (persisted)
   const [model, setModel] = useState(() => getStoredValue('cursor-bridge-model', 'auto'));
@@ -426,6 +438,11 @@ export const CursorOverlay = () => {
   useEffect(() => { setStoredValue('cursor-bridge-memory', memoryMode); }, [memoryMode]);
   useEffect(() => { setStoredValue('cursor-bridge-template', promptTemplate); }, [promptTemplate]);
   useEffect(() => { setStoredValue('cursor-bridge-custom-prompt', customPrompt); }, [customPrompt]);
+
+  // Keep targets ref in sync for use in callbacks (avoids stale closure)
+  useEffect(() => {
+    targetsRef.current = targets;
+  }, [targets]);
 
   // Auto-scroll events
   useEffect(() => {
@@ -478,11 +495,40 @@ export const CursorOverlay = () => {
           lineNumber = 0;
         }
         
-        setTarget({ fileName, lineNumber, componentName, elementText, elementTag, elementClasses, elementHTML, parentContext });
+        const newTarget: Target = { fileName, lineNumber, componentName, elementText, elementTag, elementClasses, elementHTML, parentContext };
+        
+        // Use ref to get current targets (avoids stale closure in callback)
+        const currentTargets = targetsRef.current;
+        
+        log("📊 Current targets:", currentTargets.length, "New element:", elementTag, fileName, lineNumber);
+        
+        // If we already have targets, ADD to selection (multi-select)
+        if (currentTargets.length > 0 && currentTargets.length < 5) {
+          // Check for duplicates - use multiple criteria since line numbers can be the same for different elements
+          const isDuplicate = currentTargets.some(t => 
+            t.fileName === fileName && 
+            t.lineNumber === lineNumber && 
+            t.elementTag === elementTag &&
+            t.elementClasses === elementClasses
+          );
+          if (!isDuplicate) {
+            setTargets(prev => [...prev, newTarget]);
+            log("➕ Added element to selection:", currentTargets.length + 1);
+          } else {
+            log("⚠️ Element already selected (exact match), skipping");
+          }
+        } else if (currentTargets.length >= 5) {
+          log("⚠️ Max 5 elements reached");
+        } else {
+          // No existing targets - start fresh selection
+          setTargets([newTarget]);
+          setEvents([]);
+          setCanRevert(false);
+          setSessionId(null);
+          log("🎯 New selection started");
+        }
+        
         setActive(true);
-        setEvents([]);
-        setCanRevert(false);
-        setSessionId(null);
         setInspectorActive(false);
         api.deactivate();
       }
@@ -544,7 +590,7 @@ export const CursorOverlay = () => {
 
   // Send command with streaming
   const sendCommand = async () => {
-    if (!target || !instruction.trim() || status === 'streaming') return;
+    if (targets.length === 0 || !instruction.trim() || status === 'streaming') return;
     
     const userInstruction = instruction;
     currentInstructionRef.current = userInstruction; // Track for revision history
@@ -552,19 +598,26 @@ export const CursorOverlay = () => {
     setEvents([]);
     setCanRevert(false);
     
+    // For backwards compatibility, use first target for primary fields
+    // Also send full targets array for multi-element support
+    const primaryTarget = targets[0];
+    
     try {
       const response = await fetch('http://localhost:3333/cursor-command-stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          filePath: target.fileName,
-          component: target.componentName,
-          lineNumber: target.lineNumber,
-          elementText: target.elementText,
-          elementTag: target.elementTag,
-          elementClasses: target.elementClasses,
-          elementHTML: target.elementHTML,
-          parentContext: target.parentContext,
+          // Primary target (backwards compatible)
+          filePath: primaryTarget.fileName,
+          component: primaryTarget.componentName,
+          lineNumber: primaryTarget.lineNumber,
+          elementText: primaryTarget.elementText,
+          elementTag: primaryTarget.elementTag,
+          elementClasses: primaryTarget.elementClasses,
+          elementHTML: primaryTarget.elementHTML,
+          parentContext: primaryTarget.parentContext,
+          // All targets for multi-select
+          targets: targets,
           instruction: userInstruction,
           model,
           memoryMode,
@@ -750,7 +803,7 @@ export const CursorOverlay = () => {
   // Close and reset
   const closeChat = () => {
     setActive(false);
-    setTarget(null);
+    setTargets([]); // Clear all selected elements
     setInstruction("");
     setStatus('idle');
     setEvents([]);
@@ -761,6 +814,11 @@ export const CursorOverlay = () => {
     setRevisionHistory([]); // Clear revision chain
     setShowDiffPanel(false);
     setDiffData([]);
+  };
+
+  // Remove element from selection
+  const handleRemoveTarget = (index: number) => {
+    setTargets(prev => prev.filter((_, i) => i !== index));
   };
 
   // Fetch and show diff
@@ -829,11 +887,11 @@ export const CursorOverlay = () => {
 
   return (
     <>
-      {/* Enable Agent Button (hidden but functional - react-grab uses CMD+C to activate) */}
+      {/* Enable Agent Button (hidden - use CMD+C to activate) */}
       <div 
         onClick={toggleInspector}
         style={{
-          display: 'none', // Hidden - use CMD+C to activate react-grab
+          display: 'none', // Hidden - use CMD+C
           position: 'fixed',
           bottom: '20px',
           right: '20px',
@@ -906,12 +964,17 @@ export const CursorOverlay = () => {
                 animation: isProcessing ? 'pulse 1s infinite' : 'none',
               }} />
               <span style={{ color: colors.textSecondary, fontSize: '12px', fontFamily: 'ui-monospace, monospace' }}>
-                {target?.fileName?.split('/').pop()}
+                {targets[0]?.fileName?.split('/').pop()}
+                {targets.length > 1 && (
+                  <span style={{ color: colors.accent, marginLeft: '6px' }}>
+                    +{targets.length - 1} more
+                  </span>
+                )}
               </span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               <span style={{ color: colors.textTertiary, fontSize: '11px', fontFamily: 'ui-monospace, monospace' }}>
-                L{target?.lineNumber || '~'}
+                L{targets[0]?.lineNumber || '~'}
               </span>
               {!isProcessing && (
                 <button
@@ -931,6 +994,94 @@ export const CursorOverlay = () => {
               )}
             </div>
           </div>
+
+          {/* Selected Elements (shown when idle or when multiple elements) */}
+          {!isComplete && targets.length > 0 && (
+            <div style={{
+              padding: '10px 16px',
+              borderBottom: `1px solid ${colors.borderSubtle}`,
+              background: `${colors.surface}30`,
+            }}>
+              <div style={{ 
+                fontSize: '10px', 
+                textTransform: 'uppercase', 
+                letterSpacing: '0.5px',
+                color: colors.textTertiary,
+                marginBottom: '8px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+              }}>
+                <span>Selected Elements ({targets.length}/5)</span>
+                {targets.length < 5 && !isProcessing && (
+                  <span style={{
+                    color: colors.textTertiary,
+                    fontSize: '9px',
+                    opacity: 0.7,
+                  }}>
+                    ⌘C to add more
+                  </span>
+                )}
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                {targets.map((t, i) => (
+                  <div key={`${t.fileName}-${t.lineNumber}-${i}`} style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '4px 8px',
+                    background: colors.elevated,
+                    borderRadius: '4px',
+                    fontSize: '11px',
+                  }}>
+                    <span style={{ 
+                      color: colors.accent, 
+                      fontSize: '10px',
+                      fontWeight: 600,
+                      width: '16px',
+                    }}>
+                      {i + 1}
+                    </span>
+                    <span style={{ 
+                      color: colors.textTertiary,
+                      fontFamily: 'ui-monospace, monospace',
+                    }}>
+                      &lt;{t.elementTag}&gt;
+                    </span>
+                    <span style={{ 
+                      color: colors.textSecondary,
+                      fontFamily: 'ui-monospace, monospace',
+                      flex: 1,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}>
+                      {t.fileName?.split('/').pop()}
+                    </span>
+                    <span style={{ color: colors.textTertiary, fontSize: '10px' }}>
+                      L{t.lineNumber}
+                    </span>
+                    {targets.length > 1 && !isProcessing && (
+                      <button
+                        onClick={() => handleRemoveTarget(i)}
+                        style={{
+                          background: 'transparent',
+                          border: 'none',
+                          color: colors.textTertiary,
+                          fontSize: '12px',
+                          cursor: 'pointer',
+                          padding: '0 2px',
+                          lineHeight: 1,
+                        }}
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Revision History (shown when there are previous revisions) */}
           {revisionHistory.length > 0 && (

@@ -305,6 +305,7 @@ app.post('/cursor-command-stream', async (req, res) => {
     elementClasses = '',
     elementHTML = '',
     parentContext = '',
+    targets = [], // Multi-select support
     model = 'auto',
     memoryMode = false,
     chatId = null,
@@ -362,9 +363,33 @@ app.post('/cursor-command-stream', async (req, res) => {
   }
 
   // Store original file content for potential revert
-  const originalContent = fs.readFileSync(fullFilePath, 'utf-8');
+  // Also store any additional files from multi-select
+  const filesToTrack = new Map();
+  filesToTrack.set(cleanedPath, {
+    path: fullFilePath,
+    original: fs.readFileSync(fullFilePath, 'utf-8'),
+    relativePath: cleanedPath
+  });
+  
+  // Add files from multi-select targets
+  if (targets && targets.length > 1) {
+    for (const t of targets) {
+      const tCleanedPath = cleanFilePath(t.fileName);
+      if (tCleanedPath && !filesToTrack.has(tCleanedPath)) {
+        const tFullPath = path.join(projectRoot, tCleanedPath);
+        if (fs.existsSync(tFullPath)) {
+          filesToTrack.set(tCleanedPath, {
+            path: tFullPath,
+            original: fs.readFileSync(tFullPath, 'utf-8'),
+            relativePath: tCleanedPath
+          });
+        }
+      }
+    }
+  }
+  
   revertStore.set(sessionId, {
-    files: [{ path: fullFilePath, original: originalContent, relativePath: cleanedPath }],
+    files: Array.from(filesToTrack.values()),
     timestamp: Date.now()
   });
 
@@ -374,12 +399,13 @@ app.post('/cursor-command-stream', async (req, res) => {
     file: cleanedPath,
     component,
     lineNumber,
-    model
+    model,
+    targetCount: targets?.length || 1
   });
 
   // Build prompt
   let template = customPrompt || PROMPT_TEMPLATES[promptTemplate] || PROMPT_TEMPLATES.designer;
-  const prompt = injectVariables(template, {
+  let prompt = injectVariables(template, {
     filePath: cleanedPath,
     component,
     lineNumber: lineNumber || '~',
@@ -390,6 +416,17 @@ app.post('/cursor-command-stream', async (req, res) => {
     elementHTML: elementHTML || '',
     parentContext: parentContext || ''
   });
+  
+  // Add multi-element context if more than one target
+  if (targets && targets.length > 1) {
+    const elementsContext = targets.map((t, i) => {
+      return `${i + 1}. File: ${t.fileName}, Element: <${t.elementTag}>, Component: ${t.componentName || 'unknown'}, Classes: "${(t.elementClasses || '').substring(0, 100)}"`;
+    }).join('\n');
+    
+    prompt += `\n\n---\nMULTIPLE ELEMENTS SELECTED (${targets.length} total):\n${elementsContext}\n\nApply the requested changes consistently across ALL these elements.`;
+    
+    console.log(`[multi-select] ${targets.length} elements selected`);
+  }
 
   // Full prompt (DEBUG mode only)
   if (DEBUG) {
