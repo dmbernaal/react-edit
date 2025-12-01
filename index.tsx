@@ -483,12 +483,50 @@ export const CursorOverlay = () => {
     }
   }, [active, mode, showPositionPicker]);
 
+  // Dynamically change react-grab colors based on mode
+  // react-grab uses Shadow DOM, so we need to access it through the host element
+  const updateReactGrabColors = useCallback(() => {
+    // react-grab creates a host element with data-react-grab attribute
+    const host = document.querySelector('[data-react-grab]');
+    if (!host || !host.shadowRoot) {
+      return false;
+    }
+    
+    // The shadowRoot contains the renderer where filter is applied
+    // Find the first div child which should be the rendererRoot
+    const rendererRoot = host.shadowRoot.querySelector('div');
+    if (rendererRoot) {
+      // Mode-specific hue rotations:
+      // Default react-grab color is magenta/pink (#D239C0, hue ≈ 310°)
+      // - Edit mode (mint #34D399, hue ≈ 156°): shift by -154° or +206°
+      // - Add mode (cyan #06B6D4, hue ≈ 187°): shift by -123° or +237°
+      const currentMode = modeRef.current;
+      const hueShift = currentMode === 'add' ? '237deg' : '165deg';
+      rendererRoot.style.filter = `hue-rotate(${hueShift})`;
+      console.log(`🎨 react-grab color: ${currentMode === 'add' ? 'CYAN (add)' : 'MINT (edit)'}`);
+      return true;
+    }
+    return false;
+  }, []);
+  
+  // Update colors when mode changes
+  useEffect(() => {
+    if (inspectorActive) {
+      // Try immediately
+      if (!updateReactGrabColors()) {
+        // If failed, retry after a delay
+        const timer = setTimeout(updateReactGrabColors, 100);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [mode, inspectorActive, updateReactGrabColors]);
+
   // Initialize react-grab
   useEffect(() => {
     setMounted(true);
     console.log("🔧 Initializing react-grab...");
     const api = init({
-      theme: { enabled: true, hue: 270, elementLabel: { backgroundColor: colors.surface, textColor: colors.textPrimary }},
+      theme: { enabled: true, hue: 0, elementLabel: { backgroundColor: colors.surface, textColor: colors.textPrimary }},
       onElementSelect: async (element: Element) => {
         console.log("🔍 onElementSelect triggered!");
         console.log("   Element:", element.tagName, element.className?.substring(0, 50));
@@ -650,13 +688,24 @@ export const CursorOverlay = () => {
         }
       }
       
+      // CMD+C for Edit Mode - ensure mode is set to 'edit'
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'c') {
+        // Don't preventDefault - let react-grab handle it
+        // Just set our mode to 'edit'
+        if (modeRef.current !== 'edit') {
+          console.log("✎ Edit Mode activated (CMD+C)");
+          setMode('edit');
+          setShowPositionPicker(false);
+        }
+        setInspectorActive(true);
+      }
+      
       // CMD+E for Add Mode
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'e') {
         e.preventDefault();
         e.stopPropagation();
         
         console.log("🆕 Add Mode activated (CMD+E)");
-        console.log("   Setting mode to 'add' and simulating CMD+C for react-grab...");
         
         setMode('add');
         setShowPositionPicker(false);
@@ -677,11 +726,10 @@ export const CursorOverlay = () => {
           bubbles: true,
           cancelable: true,
         });
-        console.log("   Dispatching fake CMD+C keydown event...");
         document.dispatchEvent(fakeKeyDownEvent);
         
         setInspectorActive(true);
-        console.log("   ✓ Fake CMD+C dispatched, mode set to 'add'");
+        console.log("   ✓ Mode set to 'add', react-grab activated");
       }
     };
     document.addEventListener('keydown', handleKeyDown);
