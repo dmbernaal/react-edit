@@ -397,6 +397,16 @@ app.post('/cursor-command-stream', async (req, res) => {
     console.log('─'.repeat(40));
   }
 
+  // Accumulate thinking text to avoid fragmented display
+  let thinkingBuffer = '';
+  
+  const flushThinking = () => {
+    if (thinkingBuffer.trim()) {
+      sendEvent('thinking', { text: thinkingBuffer.trim() });
+      thinkingBuffer = '';
+    }
+  };
+
   // Run cursor-agent with streaming
   runCursorAgentStream(
     prompt,
@@ -409,12 +419,15 @@ app.post('/cursor-command-stream', async (req, res) => {
         sendEvent('system', { model: event.model, sessionId: event.session_id });
       } 
       else if (event.type === 'assistant') {
+        // Accumulate thinking text instead of sending fragments
         const text = event.message?.content?.[0]?.text || '';
         if (text) {
-          sendEvent('thinking', { text });
+          thinkingBuffer += text;
         }
       }
       else if (event.type === 'tool_call') {
+        // Flush accumulated thinking before tool call
+        flushThinking();
         if (event.subtype === 'started') {
           const tc = event.tool_call;
           if (tc.readToolCall) {
@@ -459,6 +472,8 @@ app.post('/cursor-command-stream', async (req, res) => {
         }
       }
       else if (event.type === 'result') {
+        // Flush any remaining thinking before result
+        flushThinking();
         sendEvent('result', { 
           success: !event.is_error,
           duration: event.duration_ms,
