@@ -410,17 +410,31 @@ export const CursorOverlay = () => {
         let lineNumber = frameWithSource?.source?.lineNumber ?? 0;
         const componentName = frameWithSource?.name ?? element.tagName.toLowerCase();
         
-        // Capture the element's text content for context
-        const elementText = element.textContent?.trim().substring(0, 200) || '';
+        // Capture FULL element details - this is what cursor-agent needs!
         const elementTag = element.tagName.toLowerCase();
-        const elementClasses = element.className ? `.${element.className.split(' ').slice(0, 3).join('.')}` : '';
+        const elementClasses = element.className || ''; // FULL class string
+        const elementText = element.textContent?.trim().substring(0, 100) || '';
+        
+        // Get the element's outerHTML (truncated) - this is the EXACT element
+        const elementHTML = element.outerHTML.length > 500 
+          ? element.outerHTML.substring(0, 500) + '...'
+          : element.outerHTML;
+        
+        // Build parent context from React component stack
+        const parentContext = stack
+          .slice(0, 6)
+          .map(frame => frame.name)
+          .filter((name, i, arr) => name && arr.indexOf(name) === i) // unique names
+          .join(' → ');
         
         console.log("📚 Stack:", stack);
         console.log("📂 Raw file:", rawFileName);
-        console.log("📂 Cleaned file:", fileName, "Line:", lineNumber);
+        console.log("📂 Cleaned file:", fileName, "Line:", lineNumber, "(may be bundled code line)");
         console.log("🏷️ Component:", componentName);
-        console.log("📝 Element text:", elementText);
-        console.log("🏷️ Element selector:", `<${elementTag}${elementClasses}>`);
+        console.log("📝 Element text:", elementText || "(empty)");
+        console.log("🎨 Element classes:", elementClasses);
+        console.log("📄 Element HTML:", elementHTML);
+        console.log("🌳 Parent context:", parentContext);
         
         if (!fileName) {
           console.log("🖥️ No source info found - using route-based fallback");
@@ -429,7 +443,7 @@ export const CursorOverlay = () => {
           console.log("📂 Inferred file from route:", fileName);
         }
         
-        setTarget({ fileName, lineNumber, componentName, elementText, elementTag });
+        setTarget({ fileName, lineNumber, componentName, elementText, elementTag, elementClasses, elementHTML, parentContext });
         setActive(true);
         setEvents([]);
         setCanRevert(false);
@@ -512,6 +526,9 @@ export const CursorOverlay = () => {
           lineNumber: target.lineNumber,
           elementText: target.elementText,
           elementTag: target.elementTag,
+          elementClasses: target.elementClasses,
+          elementHTML: target.elementHTML,
+          parentContext: target.parentContext,
           instruction: userInstruction,
           model,
           memoryMode,
@@ -545,6 +562,28 @@ export const CursorOverlay = () => {
                 setSessionId(data.sessionId);
                 setCanRevert(data.canRevert);
                 setStatus(data.success ? 'success' : 'error');
+                // Add a result event to show what happened
+                if (data.success && data.filesChanged) {
+                  setEvents(prev => [...prev, { 
+                    id: eventId, 
+                    type: 'result', 
+                    success: true, 
+                    text: 'Changes applied successfully' 
+                  }]);
+                } else if (data.success && !data.filesChanged) {
+                  setEvents(prev => [...prev, { 
+                    id: eventId, 
+                    type: 'result', 
+                    success: true, 
+                    text: 'No changes were made' 
+                  }]);
+                } else if (!data.success) {
+                  setEvents(prev => [...prev, { 
+                    id: eventId, 
+                    type: 'error', 
+                    text: data.errorMessage || 'Operation failed' 
+                  }]);
+                }
               } else if (data.type === 'error') {
                 setEvents(prev => [...prev, { ...data, id: eventId }]);
                 setStatus('error');
@@ -785,7 +824,7 @@ export const CursorOverlay = () => {
           )}
 
           {/* Success/Error Actions */}
-          {isComplete && canRevert && (
+          {isComplete && (
             <div style={{ 
               padding: '16px',
               display: 'flex',
@@ -793,38 +832,58 @@ export const CursorOverlay = () => {
               justifyContent: 'center',
               flexShrink: 0,
             }}>
-              <button
-                onClick={handleRevert}
-                style={{
-                  background: 'transparent',
-                  border: `1px solid ${colors.error}`,
-                  borderRadius: '8px',
-                  padding: '10px 20px',
-                  color: colors.error,
-                  fontSize: '12px',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  transition: 'all 0.15s ease',
-                }}
-              >
-                Revert
-              </button>
-              <button
-                onClick={handleKeep}
-                style={{
-                  background: colors.success,
-                  border: 'none',
-                  borderRadius: '8px',
-                  padding: '10px 20px',
-                  color: colors.void,
-                  fontSize: '12px',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  boxShadow: `0 0 20px ${colors.successSoft}`,
-                }}
-              >
-                Keep Changes
-              </button>
+              {canRevert ? (
+                <>
+                  <button
+                    onClick={handleRevert}
+                    style={{
+                      background: 'transparent',
+                      border: `1px solid ${colors.error}`,
+                      borderRadius: '8px',
+                      padding: '10px 20px',
+                      color: colors.error,
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    Revert
+                  </button>
+                  <button
+                    onClick={handleKeep}
+                    style={{
+                      background: colors.success,
+                      border: 'none',
+                      borderRadius: '8px',
+                      padding: '10px 20px',
+                      color: colors.void,
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      boxShadow: `0 0 20px ${colors.successSoft}`,
+                    }}
+                  >
+                    Keep Changes
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={closeChat}
+                  style={{
+                    background: status === 'error' ? colors.error : colors.textTertiary,
+                    border: 'none',
+                    borderRadius: '8px',
+                    padding: '10px 24px',
+                    color: colors.void,
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {status === 'error' ? 'Close' : 'Done'}
+                </button>
+              )}
             </div>
           )}
 

@@ -20,56 +20,72 @@ const revertStore = new Map();
 // ============================================================================
 
 const PROMPT_TEMPLATES = {
-  designer: `You are an elite 0.1% UI/UX designer—the caliber that Apple, Stripe, Linear, and Vercel compete to hire.
+  designer: `You are an elite UI/UX designer. Edit the file "\${filePath}".
 
-Edit the file "\${filePath}".
+THE USER SELECTED THIS EXACT ELEMENT:
+\`\`\`html
+\${elementHTML}
+\`\`\`
 
-The user clicked on a <\${elementTag}> element containing the text: "\${elementText}"
-Component name from React stack: \${component}
-Approximate line number: \${lineNumber} (may not be exact, search for the text content instead)
+TO FIND THIS ELEMENT, search for these CSS classes in the file:
+\`\`\`
+\${elementClasses}
+\`\`\`
+
+React component context: \${parentContext}
+Element tag: <\${elementTag}>
+Text content (if any): "\${elementText}"
 
 USER REQUEST: \${instruction}
 
-Instructions:
-- Find the element by searching for its text content "\${elementText}" in the file
-- Make the requested changes directly to the file
-- Focus on the specific element the user selected
-- Don't ask questions, just make the edit
-- Execute with surgical precision`,
+INSTRUCTIONS:
+1. Search the file for the distinctive CSS classes above - they uniquely identify this element
+2. The className string in the JSX will match these classes
+3. Make the requested changes to that specific element
+4. Don't ask questions, just make the edit`,
 
-  minimal: `Make the smallest possible change to achieve the goal. No extra modifications.
+  minimal: `Edit "\${filePath}" with minimal changes.
 
-Edit the file "\${filePath}".
+FIND THIS ELEMENT by its classes:
+\`\`\`
+\${elementClasses}
+\`\`\`
 
-The user clicked on a <\${elementTag}> element containing: "\${elementText}"
-Approximate line: \${lineNumber}
-
-TASK: \${instruction}
-
-Find the element by its text content and make only the requested change.`,
-
-  engineer: `You are a senior software engineer. Write clean, maintainable, idiomatic code.
-
-Edit the file "\${filePath}".
-
-The user clicked on a <\${elementTag}> element containing: "\${elementText}"
-Component: \${component}
-Approximate line: \${lineNumber}
+Element HTML:
+\`\`\`html
+\${elementHTML}
+\`\`\`
 
 TASK: \${instruction}
 
-Find the element by searching for "\${elementText}" in the file and make the change. Follow existing patterns.`,
+Search for the className in the code and make ONLY the requested change.`,
 
-  accessibility: `You are an accessibility specialist ensuring WCAG 2.1 AA compliance.
+  engineer: `Edit "\${filePath}".
 
-Edit the file "\${filePath}".
+TARGET ELEMENT (search by className):
+\`\`\`html
+\${elementHTML}
+\`\`\`
 
-The user clicked on a <\${elementTag}> element containing: "\${elementText}"
-Line: \${lineNumber}
+CSS Classes to search for: \${elementClasses}
+Component context: \${parentContext}
 
 TASK: \${instruction}
 
-Find the element and ensure: keyboard navigation, screen readers, color contrast, focus states.`
+Find the element by its distinctive className and make clean, idiomatic changes.`,
+
+  accessibility: `Edit "\${filePath}" for accessibility.
+
+TARGET ELEMENT:
+\`\`\`html
+\${elementHTML}
+\`\`\`
+
+Classes: \${elementClasses}
+
+TASK: \${instruction}
+
+Find by className, then ensure: keyboard nav, screen readers, color contrast, focus states.`
 };
 
 // ============================================================================
@@ -126,7 +142,10 @@ const injectVariables = (template, vars) => {
     .replace(/\$\{lineNumber\}/g, vars.lineNumber || '~')
     .replace(/\$\{instruction\}/g, vars.instruction || '')
     .replace(/\$\{elementText\}/g, vars.elementText || '')
-    .replace(/\$\{elementTag\}/g, vars.elementTag || 'element');
+    .replace(/\$\{elementTag\}/g, vars.elementTag || 'element')
+    .replace(/\$\{elementClasses\}/g, vars.elementClasses || '')
+    .replace(/\$\{elementHTML\}/g, vars.elementHTML || '')
+    .replace(/\$\{parentContext\}/g, vars.parentContext || '');
 };
 
 // ============================================================================
@@ -199,8 +218,12 @@ const runCursorAgentStream = (prompt, cwd, options, onEvent, onComplete, onError
     }
   });
 
+  let stderrBuffer = '';
+  
   child.stderr.on('data', (data) => {
-    console.log(`[stream] stderr: ${data.toString().trim()}`);
+    const text = data.toString().trim();
+    console.log(`[stream] stderr: ${text}`);
+    stderrBuffer += text + '\n';
   });
 
   child.on('close', (code) => {
@@ -216,7 +239,7 @@ const runCursorAgentStream = (prompt, cwd, options, onEvent, onComplete, onError
     }
     
     console.log(`[stream] Completed with code ${code}`);
-    onComplete(code === 0, fileWrites);
+    onComplete(code === 0, fileWrites, stderrBuffer.trim());
   });
 
   child.on('error', (err) => {
@@ -239,6 +262,9 @@ app.post('/cursor-command-stream', async (req, res) => {
     lineNumber,
     elementText = '',
     elementTag = 'element',
+    elementClasses = '',
+    elementHTML = '',
+    parentContext = '',
     model = 'auto',
     memoryMode = false,
     chatId = null,
@@ -279,7 +305,8 @@ app.post('/cursor-command-stream', async (req, res) => {
   const sessionId = `session-${Date.now()}`;
 
   console.log(`[target] ${cleanedPath}:${lineNumber || '~'} <${component}>`);
-  console.log(`[element] <${elementTag}> "${elementText?.substring(0, 80)}${elementText?.length > 80 ? '...' : ''}"`);
+  console.log(`[element] <${elementTag}> classes: "${elementClasses?.substring(0, 100)}${elementClasses?.length > 100 ? '...' : ''}"`);
+  console.log(`[context] ${parentContext || 'no parent context'}`);
   console.log(`[model] ${model}`);
   console.log(`[task] ${instruction}`);
 
@@ -314,10 +341,16 @@ app.post('/cursor-command-stream', async (req, res) => {
     lineNumber: lineNumber || '~',
     instruction,
     elementText: elementText || '',
-    elementTag: elementTag || 'element'
+    elementTag: elementTag || 'element',
+    elementClasses: elementClasses || '',
+    elementHTML: elementHTML || '',
+    parentContext: parentContext || ''
   });
 
-  console.log('[prompt preview]', prompt.substring(0, 300).replace(/\n/g, ' ') + '...');
+  console.log('[prompt]');
+  console.log('─'.repeat(40));
+  console.log(prompt);
+  console.log('─'.repeat(40));
 
   // Run cursor-agent with streaming
   runCursorAgentStream(
@@ -386,7 +419,7 @@ app.post('/cursor-command-stream', async (req, res) => {
       }
     },
     // On complete
-    (success, fileWrites) => {
+    (success, fileWrites, stderrOutput) => {
       // Update revert store with any additional file writes
       const stored = revertStore.get(sessionId);
       if (stored && fileWrites.length > 0) {
@@ -395,10 +428,21 @@ app.post('/cursor-command-stream', async (req, res) => {
         )];
       }
       
+      // Check for errors in stderr
+      if (stderrOutput && stderrOutput.includes('Cannot use this model')) {
+        sendEvent('error', { message: stderrOutput });
+      }
+      
+      // Determine if changes were actually made
+      const filesChanged = fileWrites.length > 0;
+      const canRevert = filesChanged && success;
+      
       sendEvent('complete', { 
-        success,
+        success: success && !stderrOutput?.includes('Cannot use this model'),
         sessionId,
-        canRevert: true
+        canRevert,
+        filesChanged,
+        errorMessage: !success ? (stderrOutput || 'Command failed') : null
       });
       res.end();
     },
