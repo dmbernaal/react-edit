@@ -87,7 +87,18 @@ interface StreamEvent {
 const cleanFilePath = (rawPath: string | null): string | null => {
   if (!rawPath) return null;
   let cleaned = rawPath.split('?')[0];
-  const prefixes = ['about://React/Server/', 'webpack-internal://', '///rsc/./', '//rsc/./', '/rsc/./', 'rsc/./'];
+  const prefixes = [
+    'about://React/Server/',
+    'webpack-internal://',
+    '///rsc/./',
+    '//rsc/./',
+    '/rsc/./',
+    'rsc/./',
+    '///app-pages-browser/./',  // Next.js App Router prefix
+    '//app-pages-browser/./',
+    '/app-pages-browser/./',
+    'app-pages-browser/./',
+  ];
   for (const prefix of prefixes) {
     if (cleaned.includes(prefix)) cleaned = cleaned.split(prefix).pop() || cleaned;
   }
@@ -344,6 +355,7 @@ export const CursorOverlay = () => {
   // Core state
   const [mounted, setMounted] = useState(false);
   const [active, setActive] = useState(false);
+  const [inspectorActive, setInspectorActive] = useState(false);
   const [target, setTarget] = useState<any>(null);
   const [instruction, setInstruction] = useState("");
   const [status, setStatus] = useState<'idle' | 'streaming' | 'success' | 'error'>('idle');
@@ -388,24 +400,60 @@ export const CursorOverlay = () => {
     const api = init({
       theme: { enabled: true, hue: 270, elementLabel: { backgroundColor: colors.surface, textColor: colors.textPrimary }},
       onElementSelect: async (element: Element) => {
+        console.log("🔍 Selected element:", element);
+        
         const stack = await getStack(element);
         const rawFileName = getFileName(stack);
         let fileName = cleanFilePath(rawFileName);
+        
         const frameWithSource = stack.find(frame => frame.source !== null);
         let lineNumber = frameWithSource?.source?.lineNumber ?? 0;
         const componentName = frameWithSource?.name ?? element.tagName.toLowerCase();
-        if (!fileName) { fileName = inferFileFromRoute(); lineNumber = 0; }
-        setTarget({ fileName, lineNumber, componentName });
+        
+        // Capture the element's text content for context
+        const elementText = element.textContent?.trim().substring(0, 200) || '';
+        const elementTag = element.tagName.toLowerCase();
+        const elementClasses = element.className ? `.${element.className.split(' ').slice(0, 3).join('.')}` : '';
+        
+        console.log("📚 Stack:", stack);
+        console.log("📂 Raw file:", rawFileName);
+        console.log("📂 Cleaned file:", fileName, "Line:", lineNumber);
+        console.log("🏷️ Component:", componentName);
+        console.log("📝 Element text:", elementText);
+        console.log("🏷️ Element selector:", `<${elementTag}${elementClasses}>`);
+        
+        if (!fileName) {
+          console.log("🖥️ No source info found - using route-based fallback");
+          fileName = inferFileFromRoute();
+          lineNumber = 0;
+          console.log("📂 Inferred file from route:", fileName);
+        }
+        
+        setTarget({ fileName, lineNumber, componentName, elementText, elementTag });
         setActive(true);
         setEvents([]);
         setCanRevert(false);
         setSessionId(null);
+        setInspectorActive(false);
         api.deactivate();
       }
     });
     setGrabApi(api);
     return () => { if (api) api.deactivate(); };
   }, []);
+
+  // Toggle inspector mode (activate/deactivate react-grab)
+  const toggleInspector = () => {
+    if (!grabApi) return;
+    if (inspectorActive) {
+      grabApi.deactivate();
+      setInspectorActive(false);
+    } else {
+      grabApi.activate();
+      setInspectorActive(true);
+      setActive(false);
+    }
+  };
 
   // Drag handlers
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -462,6 +510,8 @@ export const CursorOverlay = () => {
           filePath: target.fileName,
           component: target.componentName,
           lineNumber: target.lineNumber,
+          elementText: target.elementText,
+          elementTag: target.elementTag,
           instruction: userInstruction,
           model,
           memoryMode,
@@ -586,6 +636,39 @@ export const CursorOverlay = () => {
 
   return (
     <>
+      {/* Enable Agent Button (always visible) */}
+      <div 
+        onClick={toggleInspector}
+        style={{
+          position: 'fixed',
+          bottom: '20px',
+          right: '20px',
+          zIndex: 99999,
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+          background: inspectorActive ? colors.success : colors.surface,
+          padding: '10px 16px',
+          borderRadius: '30px',
+          border: `1px solid ${inspectorActive ? colors.success : colors.borderDefault}`,
+          color: colors.textPrimary,
+          fontSize: '13px',
+          fontFamily: 'system-ui, sans-serif',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.3)',
+          transition: 'all 0.2s ease',
+        }}
+      >
+        <div style={{
+          width: '8px',
+          height: '8px',
+          borderRadius: '50%',
+          background: inspectorActive ? colors.textPrimary : colors.textMuted,
+          boxShadow: inspectorActive ? '0 0 8px rgba(255,255,255,0.5)' : 'none',
+        }} />
+        <span>{inspectorActive ? 'Click Element' : 'Enable Agent'}</span>
+      </div>
+
       {/* Main Chat Panel */}
       {active && (
         <div

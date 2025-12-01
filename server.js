@@ -20,42 +20,56 @@ const revertStore = new Map();
 // ============================================================================
 
 const PROMPT_TEMPLATES = {
-  designer: `You are an elite 0.1% UI/UX designer—the caliber that Apple, Stripe, Linear, and Vercel compete to hire. You have a supernatural eye for:
+  designer: `You are an elite 0.1% UI/UX designer—the caliber that Apple, Stripe, Linear, and Vercel compete to hire.
 
-• Visual hierarchy that guides the eye effortlessly
-• Typography that feels inevitable, not chosen
-• Color relationships that create emotional resonance
-• Spacing and rhythm that breathes
-• Micro-details that spark delight
-• Accessibility woven seamlessly into beauty
+Edit the file "\${filePath}".
 
-FILE: \${filePath}
-ELEMENT: <\${component}> (line \${lineNumber})
+The user clicked on a <\${elementTag}> element containing the text: "\${elementText}"
+Component name from React stack: \${component}
+Approximate line number: \${lineNumber} (may not be exact, search for the text content instead)
+
 USER REQUEST: \${instruction}
 
-Execute with surgical precision. Every pixel matters. Ship it.`,
+Instructions:
+- Find the element by searching for its text content "\${elementText}" in the file
+- Make the requested changes directly to the file
+- Focus on the specific element the user selected
+- Don't ask questions, just make the edit
+- Execute with surgical precision`,
 
   minimal: `Make the smallest possible change to achieve the goal. No extra modifications.
 
-FILE: \${filePath}
-ELEMENT: <\${component}>
-TASK: \${instruction}`,
+Edit the file "\${filePath}".
+
+The user clicked on a <\${elementTag}> element containing: "\${elementText}"
+Approximate line: \${lineNumber}
+
+TASK: \${instruction}
+
+Find the element by its text content and make only the requested change.`,
 
   engineer: `You are a senior software engineer. Write clean, maintainable, idiomatic code.
 
-FILE: \${filePath}
-ELEMENT: <\${component}>
+Edit the file "\${filePath}".
+
+The user clicked on a <\${elementTag}> element containing: "\${elementText}"
+Component: \${component}
+Approximate line: \${lineNumber}
+
 TASK: \${instruction}
 
-Follow existing patterns. No over-engineering. Ship it.`,
+Find the element by searching for "\${elementText}" in the file and make the change. Follow existing patterns.`,
 
   accessibility: `You are an accessibility specialist ensuring WCAG 2.1 AA compliance.
 
-FILE: \${filePath}
-ELEMENT: <\${component}>
+Edit the file "\${filePath}".
+
+The user clicked on a <\${elementTag}> element containing: "\${elementText}"
+Line: \${lineNumber}
+
 TASK: \${instruction}
 
-Consider: keyboard navigation, screen readers, color contrast, focus states.`
+Find the element and ensure: keyboard navigation, screen readers, color contrast, focus states.`
 };
 
 // ============================================================================
@@ -65,7 +79,18 @@ Consider: keyboard navigation, screen readers, color contrast, focus states.`
 const cleanFilePath = (rawPath) => {
   if (!rawPath) return null;
   let cleaned = rawPath.split('?')[0];
-  const prefixes = ['about://React/Server/', 'webpack-internal://', '///rsc/./', '//rsc/./', '/rsc/./', 'rsc/./'];
+  const prefixes = [
+    'about://React/Server/',
+    'webpack-internal://',
+    '///rsc/./',
+    '//rsc/./',
+    '/rsc/./',
+    'rsc/./',
+    '///app-pages-browser/./',  // Next.js App Router prefix
+    '//app-pages-browser/./',
+    '/app-pages-browser/./',
+    'app-pages-browser/./',
+  ];
   for (const prefix of prefixes) {
     if (cleaned.includes(prefix)) cleaned = cleaned.split(prefix).pop();
   }
@@ -99,7 +124,9 @@ const injectVariables = (template, vars) => {
     .replace(/\$\{filePath\}/g, vars.filePath || '')
     .replace(/\$\{component\}/g, vars.component || '')
     .replace(/\$\{lineNumber\}/g, vars.lineNumber || '~')
-    .replace(/\$\{instruction\}/g, vars.instruction || '');
+    .replace(/\$\{instruction\}/g, vars.instruction || '')
+    .replace(/\$\{elementText\}/g, vars.elementText || '')
+    .replace(/\$\{elementTag\}/g, vars.elementTag || 'element');
 };
 
 // ============================================================================
@@ -210,6 +237,8 @@ app.post('/cursor-command-stream', async (req, res) => {
     instruction, 
     component, 
     lineNumber,
+    elementText = '',
+    elementTag = 'element',
     model = 'auto',
     memoryMode = false,
     chatId = null,
@@ -250,6 +279,7 @@ app.post('/cursor-command-stream', async (req, res) => {
   const sessionId = `session-${Date.now()}`;
 
   console.log(`[target] ${cleanedPath}:${lineNumber || '~'} <${component}>`);
+  console.log(`[element] <${elementTag}> "${elementText?.substring(0, 80)}${elementText?.length > 80 ? '...' : ''}"`);
   console.log(`[model] ${model}`);
   console.log(`[task] ${instruction}`);
 
@@ -282,8 +312,12 @@ app.post('/cursor-command-stream', async (req, res) => {
     filePath: cleanedPath,
     component,
     lineNumber: lineNumber || '~',
-    instruction
+    instruction,
+    elementText: elementText || '',
+    elementTag: elementTag || 'element'
   });
+
+  console.log('[prompt preview]', prompt.substring(0, 300).replace(/\n/g, ' ') + '...');
 
   // Run cursor-agent with streaming
   runCursorAgentStream(
