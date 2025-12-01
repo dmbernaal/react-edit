@@ -66,6 +66,16 @@ const colors = {
   errorSoft: 'rgba(239,68,68,0.15)',
   warning: '#FBBF24',
   warningSoft: 'rgba(251,191,36,0.15)',
+  // Add mode colors (cyan/teal)
+  addMode: '#06B6D4',
+  addModeSoft: 'rgba(6,182,212,0.15)',
+  addModeGlow: 'rgba(6,182,212,0.4)',
+  // Edit mode colors (mint)
+  editMode: '#34D399',
+  editModeSoft: 'rgba(52,211,153,0.15)',
+  editModeGlow: 'rgba(52,211,153,0.4)',
+  // Accent (alias for brand)
+  accent: '#6F3BF5',
 };
 
 // ============================================================================
@@ -413,6 +423,7 @@ export const CursorOverlay = () => {
   const [canRevert, setCanRevert] = useState(false);
   const [filesChanged, setFilesChanged] = useState<{path: string; lines: number; isNew?: boolean}[]>([]);
   const eventsContainerRef = useRef<HTMLDivElement>(null);
+  const instructionInputRef = useRef<HTMLTextAreaElement>(null);
   
   // Revision history - tracks all edits in the current revision chain
   const [revisionHistory, setRevisionHistory] = useState<RevisionStep[]>([]);
@@ -461,6 +472,16 @@ export const CursorOverlay = () => {
       eventsContainerRef.current.scrollTop = eventsContainerRef.current.scrollHeight;
     }
   }, [events]);
+
+  // Auto-focus input when panel opens (especially in add mode)
+  useEffect(() => {
+    if (active && mode === 'add' && !showPositionPicker && instructionInputRef.current) {
+      // Small delay to ensure DOM is ready
+      setTimeout(() => {
+        instructionInputRef.current?.focus();
+      }, 100);
+    }
+  }, [active, mode, showPositionPicker]);
 
   // Initialize react-grab
   useEffect(() => {
@@ -518,11 +539,12 @@ export const CursorOverlay = () => {
         
         log("📊 Current targets:", currentTargets.length, "Mode:", currentMode, "New element:", elementTag, fileName, lineNumber);
         
-        // ADD MODE: Single element selection, show position picker
+        // ADD MODE: Single element selection, default to "after" (skip position picker for faster UX)
         if (currentMode === 'add') {
-          log("🆕 Add Mode - selecting container for insertion");
+          console.log("🆕 Add Mode - selecting container for insertion");
           setTargets([newTarget]);
-          setShowPositionPicker(true);
+          setAddPosition('after'); // Default to "after" - user can change if needed
+          setShowPositionPicker(false); // Skip position picker for faster flow
           setEvents([]);
           setCanRevert(false);
           setSessionId(null);
@@ -1033,44 +1055,70 @@ export const CursorOverlay = () => {
           {/* Header */}
           <div style={{
             padding: '14px 16px',
-            borderBottom: `1px solid ${colors.borderSubtle}`,
+            borderBottom: `1px solid ${mode === 'add' ? colors.addModeSoft : colors.editModeSoft}`,
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
             cursor: 'grab',
             flexShrink: 0,
+            background: mode === 'add' ? `${colors.addModeSoft}` : `${colors.editModeSoft}`,
+            transition: 'all 0.2s ease',
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               <div style={{
                 width: '6px',
                 height: '6px',
                 borderRadius: '50%',
-                background: mode === 'add' ? colors.success : 
-                  isProcessing ? colors.warning : status === 'success' ? colors.success : status === 'error' ? colors.error : colors.textTertiary,
-                boxShadow: mode === 'add' ? `0 0 8px ${colors.successSoft}` :
-                  isProcessing ? '0 0 8px rgba(251,191,36,0.5)' : 'none',
+                background: mode === 'add' ? colors.addMode : 
+                  isProcessing ? colors.warning : status === 'success' ? colors.success : status === 'error' ? colors.error : colors.editMode,
+                boxShadow: mode === 'add' ? `0 0 8px ${colors.addModeGlow}` :
+                  isProcessing ? '0 0 8px rgba(251,191,36,0.5)' : `0 0 8px ${colors.editModeGlow}`,
                 animation: isProcessing ? 'pulse 1s infinite' : 'none',
               }} />
               {mode === 'add' ? (
-                <span style={{ color: colors.success, fontSize: '12px', fontWeight: 600 }}>
-                  ＋ ADD MODE
+                <span style={{ color: colors.addMode, fontSize: '12px', fontWeight: 600, letterSpacing: '0.5px' }}>
+                  ＋ ADD {addPosition.toUpperCase().replace('-', ' ')}
                 </span>
               ) : (
-                <span style={{ color: colors.textSecondary, fontSize: '12px', fontFamily: 'ui-monospace, monospace' }}>
-                  {targets[0]?.fileName?.split('/').pop()}
-                  {targets.length > 1 && (
-                    <span style={{ color: colors.brand, marginLeft: '6px' }}>
-                      +{targets.length - 1} more
-                    </span>
-                  )}
+                <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ color: colors.editMode, fontSize: '12px', fontWeight: 600, letterSpacing: '0.5px' }}>
+                    ✎ EDIT
+                  </span>
+                  <span style={{ color: colors.textSecondary, fontSize: '11px', fontFamily: 'ui-monospace, monospace' }}>
+                    {targets[0]?.fileName?.split('/').pop()}
+                    {targets.length > 1 && (
+                      <span style={{ color: colors.editMode, marginLeft: '6px' }}>
+                        +{targets.length - 1} more
+                      </span>
+                    )}
+                  </span>
                 </span>
               )}
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               {mode === 'add' ? (
-                <span style={{ color: colors.textTertiary, fontSize: '10px' }}>
-                  Adding to {targets[0]?.fileName?.split('/').pop()}
-                </span>
+                <>
+                  <span style={{ color: colors.textTertiary, fontSize: '10px' }}>
+                    &lt;{targets[0]?.elementTag}&gt;
+                  </span>
+                  {!isProcessing && (
+                    <button
+                      onClick={() => setShowPositionPicker(!showPositionPicker)}
+                      style={{
+                        background: colors.addModeSoft,
+                        border: `1px solid ${colors.addMode}40`,
+                        borderRadius: '4px',
+                        padding: '3px 8px',
+                        color: colors.addMode,
+                        fontSize: '10px',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease',
+                      }}
+                    >
+                      Change ▾
+                    </button>
+                  )}
+                </>
               ) : (
                 <span style={{ color: colors.textTertiary, fontSize: '11px', fontFamily: 'ui-monospace, monospace' }}>
                   L{targets[0]?.lineNumber || '~'}
@@ -1095,26 +1143,19 @@ export const CursorOverlay = () => {
             </div>
           </div>
 
-          {/* Position Picker (Add Mode) */}
+          {/* Position Picker (Add Mode) - Compact dropdown style */}
           {mode === 'add' && showPositionPicker && (
             <div style={{
-              padding: '16px',
-              borderBottom: `1px solid ${colors.borderSubtle}`,
-              background: `${colors.successSoft}`,
+              padding: '12px 16px',
+              borderBottom: `1px solid ${colors.addModeSoft}`,
+              background: `linear-gradient(180deg, ${colors.addModeSoft} 0%, transparent 100%)`,
             }}>
-              <div style={{
-                fontSize: '11px',
-                color: colors.textSecondary,
-                marginBottom: '12px',
-              }}>
-                Where should the new element be added?
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
                 {[
-                  { id: 'before', label: '⬆️ Before', desc: `Add before this <${targets[0]?.elementTag}>` },
-                  { id: 'after', label: '⬇️ After', desc: `Add after this <${targets[0]?.elementTag}>` },
-                  { id: 'inside-start', label: '📥 Inside (first)', desc: 'As first child of container' },
-                  { id: 'inside-end', label: '📤 Inside (last)', desc: 'As last child of container' },
+                  { id: 'before', label: '⬆ Before', short: true },
+                  { id: 'after', label: '⬇ After', short: true },
+                  { id: 'inside-start', label: '↳ First child', short: true },
+                  { id: 'inside-end', label: '↲ Last child', short: true },
                 ].map(pos => (
                   <button
                     key={pos.id}
@@ -1123,30 +1164,18 @@ export const CursorOverlay = () => {
                       setShowPositionPicker(false);
                     }}
                     style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: '10px 12px',
-                      background: addPosition === pos.id ? colors.brand : colors.surface,
-                      border: `1px solid ${addPosition === pos.id ? colors.brand : colors.borderDefault}`,
-                      borderRadius: '8px',
+                      padding: '6px 12px',
+                      background: addPosition === pos.id ? colors.addMode : colors.surface,
+                      border: `1px solid ${addPosition === pos.id ? colors.addMode : colors.borderDefault}`,
+                      borderRadius: '6px',
                       cursor: 'pointer',
                       transition: 'all 0.15s ease',
+                      color: addPosition === pos.id ? colors.textPrimary : colors.textSecondary,
+                      fontSize: '11px',
+                      fontWeight: 500,
                     }}
                   >
-                    <span style={{ 
-                      color: addPosition === pos.id ? colors.textPrimary : colors.textSecondary,
-                      fontSize: '13px',
-                      fontWeight: 500,
-                    }}>
-                      {pos.label}
-                    </span>
-                    <span style={{ 
-                      color: addPosition === pos.id ? 'rgba(255,255,255,0.7)' : colors.textTertiary,
-                      fontSize: '11px',
-                    }}>
-                      {pos.desc}
-                    </span>
+                    {pos.label}
                   </button>
                 ))}
               </div>
@@ -1338,6 +1367,7 @@ export const CursorOverlay = () => {
           {!isComplete && (
             <div style={{ padding: '16px', flexShrink: 0 }}>
               <textarea
+                ref={instructionInputRef}
                 autoFocus
                 rows={3}
                 disabled={isProcessing}
