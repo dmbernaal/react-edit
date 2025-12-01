@@ -370,6 +370,7 @@ export const CursorOverlay = () => {
   // Streaming state
   const [events, setEvents] = useState<StreamEvent[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [agentSessionId, setAgentSessionId] = useState<string | null>(null); // cursor-agent's session for --resume
   const [canRevert, setCanRevert] = useState(false);
   const [filesChanged, setFilesChanged] = useState<{path: string; lines: number; isNew?: boolean}[]>([]);
   const eventsContainerRef = useRef<HTMLDivElement>(null);
@@ -535,6 +536,7 @@ export const CursorOverlay = () => {
           model,
           memoryMode,
           chatId,
+          revisionSessionId: agentSessionId, // For --resume on revisions
           promptTemplate,
           customPrompt: promptTemplate === 'custom' ? customPrompt : null,
         })
@@ -562,6 +564,7 @@ export const CursorOverlay = () => {
               
               if (data.type === 'complete') {
                 setSessionId(data.sessionId);
+                setAgentSessionId(data.agentSessionId); // Store for --resume revisions
                 setCanRevert(data.canRevert);
                 setStatus(data.success ? 'success' : 'error');
                 
@@ -636,6 +639,7 @@ export const CursorOverlay = () => {
         setEvents([]);
         setCanRevert(false);
         setSessionId(null);
+        setAgentSessionId(null); // Clear for fresh start (undo means new attempt)
         setFilesChanged([]);
         setInstruction(""); // Clear instruction for fresh start
       }
@@ -653,6 +657,18 @@ export const CursorOverlay = () => {
     closeChat();
   };
 
+  // Revise - keep panel open with agentSessionId for --resume
+  const handleRevise = () => {
+    // Reset to input mode but preserve agentSessionId for continuation
+    setStatus('idle');
+    setEvents([]);
+    setCanRevert(false);
+    setSessionId(null);
+    setFilesChanged([]);
+    // Keep instruction so user can modify it
+    // Keep agentSessionId for --resume
+  };
+
   // Close and reset
   const closeChat = () => {
     setActive(false);
@@ -662,6 +678,7 @@ export const CursorOverlay = () => {
     setEvents([]);
     setCanRevert(false);
     setSessionId(null);
+    setAgentSessionId(null); // Clear for fresh start
     setFilesChanged([]);
   };
 
@@ -899,7 +916,7 @@ export const CursorOverlay = () => {
                         background: 'transparent',
                         border: `1px solid ${colors.textTertiary}`,
                         borderRadius: '8px',
-                        padding: '10px 20px',
+                        padding: '10px 16px',
                         color: colors.textSecondary,
                         fontSize: '12px',
                         fontWeight: 600,
@@ -913,12 +930,31 @@ export const CursorOverlay = () => {
                       <span>↩</span> Undo
                     </button>
                     <button
+                      onClick={handleRevise}
+                      style={{
+                        background: 'transparent',
+                        border: `1px solid ${colors.accent}`,
+                        borderRadius: '8px',
+                        padding: '10px 16px',
+                        color: colors.accent,
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                      }}
+                    >
+                      <span>✎</span> Revise
+                    </button>
+                    <button
                       onClick={handleKeep}
                       style={{
                         background: colors.success,
                         border: 'none',
                         borderRadius: '8px',
-                        padding: '10px 20px',
+                        padding: '10px 16px',
                         color: colors.void,
                         fontSize: '12px',
                         fontWeight: 600,

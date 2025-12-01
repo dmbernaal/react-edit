@@ -307,6 +307,7 @@ app.post('/cursor-command-stream', async (req, res) => {
     model = 'auto',
     memoryMode = false,
     chatId = null,
+    revisionSessionId = null, // For --resume on revision requests
     promptTemplate = 'designer',
     customPrompt = null
   } = req.body;
@@ -399,6 +400,7 @@ app.post('/cursor-command-stream', async (req, res) => {
 
   // Accumulate thinking text to avoid fragmented display
   let thinkingBuffer = '';
+  let agentSessionId = null; // cursor-agent's session_id for --resume
   
   const flushThinking = () => {
     if (thinkingBuffer.trim()) {
@@ -408,15 +410,20 @@ app.post('/cursor-command-stream', async (req, res) => {
   };
 
   // Run cursor-agent with streaming
+  // Use revisionSessionId for --resume if provided (revision mode), otherwise use chatId if memoryMode is on
+  const resumeId = revisionSessionId || (memoryMode ? chatId : null);
+  log('[debug] resumeId:', resumeId, 'revisionSessionId:', revisionSessionId, 'memoryMode:', memoryMode);
+  
   runCursorAgentStream(
     prompt,
     projectRoot,
-    { model, chatId: memoryMode ? chatId : null },
+    { model, chatId: resumeId },
     // On each event
     (event) => {
       // Transform events for frontend
       if (event.type === 'system' && event.subtype === 'init') {
-        sendEvent('system', { model: event.model, sessionId: event.session_id });
+        agentSessionId = event.session_id; // Store for --resume
+        sendEvent('system', { model: event.model, agentSessionId: event.session_id });
       } 
       else if (event.type === 'assistant') {
         // Accumulate thinking text instead of sending fragments
@@ -516,6 +523,7 @@ app.post('/cursor-command-stream', async (req, res) => {
       sendEvent('complete', { 
         success: success && !stderrOutput?.includes('Cannot use this model'),
         sessionId,
+        agentSessionId, // cursor-agent's session for --resume revisions
         canRevert,
         filesChanged: filesChangedList, // Now an array with details
         errorMessage: !success ? (stderrOutput || 'Command failed') : null
