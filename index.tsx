@@ -399,6 +399,12 @@ export const CursorOverlay = () => {
   const [instruction, setInstruction] = useState("");
   const [status, setStatus] = useState<'idle' | 'streaming' | 'success' | 'error'>('idle');
   const [grabApi, setGrabApi] = useState<any>(null);
+  
+  // Add Mode state
+  const [mode, setMode] = useState<'edit' | 'add'>('edit');
+  const [addPosition, setAddPosition] = useState<'before' | 'after' | 'inside-start' | 'inside-end'>('after');
+  const [showPositionPicker, setShowPositionPicker] = useState(false);
+  const modeRef = useRef<'edit' | 'add'>('edit'); // Ref for callback access
 
   // Streaming state
   const [events, setEvents] = useState<StreamEvent[]>([]);
@@ -444,6 +450,11 @@ export const CursorOverlay = () => {
     targetsRef.current = targets;
   }, [targets]);
 
+  // Keep mode ref in sync for use in callbacks (avoids stale closure)
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
+
   // Auto-scroll events
   useEffect(() => {
     if (eventsContainerRef.current) {
@@ -454,9 +465,13 @@ export const CursorOverlay = () => {
   // Initialize react-grab
   useEffect(() => {
     setMounted(true);
+    console.log("🔧 Initializing react-grab...");
     const api = init({
       theme: { enabled: true, hue: 270, elementLabel: { backgroundColor: colors.surface, textColor: colors.textPrimary }},
       onElementSelect: async (element: Element) => {
+        console.log("🔍 onElementSelect triggered!");
+        console.log("   Element:", element.tagName, element.className?.substring(0, 50));
+        console.log("   Current mode (from ref):", modeRef.current);
         log("🔍 Selected element:", element);
         
         const stack = await getStack(element);
@@ -499,9 +514,25 @@ export const CursorOverlay = () => {
         
         // Use ref to get current targets (avoids stale closure in callback)
         const currentTargets = targetsRef.current;
+        const currentMode = modeRef.current;
         
-        log("📊 Current targets:", currentTargets.length, "New element:", elementTag, fileName, lineNumber);
+        log("📊 Current targets:", currentTargets.length, "Mode:", currentMode, "New element:", elementTag, fileName, lineNumber);
         
+        // ADD MODE: Single element selection, show position picker
+        if (currentMode === 'add') {
+          log("🆕 Add Mode - selecting container for insertion");
+          setTargets([newTarget]);
+          setShowPositionPicker(true);
+          setEvents([]);
+          setCanRevert(false);
+          setSessionId(null);
+          setActive(true);
+          setInspectorActive(false);
+          api.deactivate();
+          return;
+        }
+        
+        // EDIT MODE: Multi-select support
         // If we already have targets, ADD to selection (multi-select)
         if (currentTargets.length > 0 && currentTargets.length < 5) {
           // Check for duplicates - use multiple criteria since line numbers can be the same for different elements
@@ -533,6 +564,9 @@ export const CursorOverlay = () => {
         api.deactivate();
       }
     });
+    console.log("🔧 react-grab initialized, api:", api);
+    console.log("   api.activate:", typeof api?.activate);
+    console.log("   api.deactivate:", typeof api?.deactivate);
     setGrabApi(api);
     return () => { if (api) api.deactivate(); };
   }, []);
@@ -576,17 +610,61 @@ export const CursorOverlay = () => {
     };
   }, [isDragging]);
 
-  // Escape key handler
+  // Keyboard shortcuts handler
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore key repeats (held down keys)
+      if (e.repeat) return;
+      
+      // Escape key
       if (e.key === 'Escape') {
-        if (showPromptEditor) setShowPromptEditor(false);
-        else if (active && status !== 'streaming') closeChat();
+        if (showPositionPicker) {
+          setShowPositionPicker(false);
+          setMode('edit');
+        } else if (showPromptEditor) {
+          setShowPromptEditor(false);
+        } else if (active && status !== 'streaming') {
+          closeChat();
+        }
+      }
+      
+      // CMD+E for Add Mode
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'e') {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        console.log("🆕 Add Mode activated (CMD+E)");
+        console.log("   Setting mode to 'add' and simulating CMD+C for react-grab...");
+        
+        setMode('add');
+        setShowPositionPicker(false);
+        // Clear previous targets for fresh add
+        setTargets([]);
+        setEvents([]);
+        setCanRevert(false);
+        setSessionId(null);
+        setActive(false);
+        
+        // Simulate CMD+C keypress to trigger react-grab's visual UI
+        // react-grab only responds to CMD+C (KeyC), so we need to fake it
+        const fakeKeyDownEvent = new KeyboardEvent('keydown', {
+          key: 'c',
+          code: 'KeyC',
+          metaKey: true,
+          ctrlKey: e.ctrlKey,
+          bubbles: true,
+          cancelable: true,
+        });
+        console.log("   Dispatching fake CMD+C keydown event...");
+        document.dispatchEvent(fakeKeyDownEvent);
+        
+        setInspectorActive(true);
+        console.log("   ✓ Fake CMD+C dispatched, mode set to 'add'");
       }
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [active, showPromptEditor, status]);
+  }, [active, showPromptEditor, showPositionPicker, status, grabApi, inspectorActive]);
 
   // Send command with streaming
   const sendCommand = async () => {
@@ -597,6 +675,7 @@ export const CursorOverlay = () => {
     setStatus('streaming');
     setEvents([]);
     setCanRevert(false);
+    setShowPositionPicker(false); // Hide position picker when sending
     
     // For backwards compatibility, use first target for primary fields
     // Also send full targets array for multi-element support
@@ -625,6 +704,9 @@ export const CursorOverlay = () => {
           revisionSessionId: agentSessionId, // For --resume on revisions
           promptTemplate,
           customPrompt: promptTemplate === 'custom' ? customPrompt : null,
+          // Add mode specific
+          mode: mode,
+          addPosition: mode === 'add' ? addPosition : null,
         })
       });
 
@@ -814,6 +896,10 @@ export const CursorOverlay = () => {
     setRevisionHistory([]); // Clear revision chain
     setShowDiffPanel(false);
     setDiffData([]);
+    // Reset add mode state
+    setMode('edit');
+    setShowPositionPicker(false);
+    setAddPosition('after');
   };
 
   // Remove element from selection
@@ -959,23 +1045,37 @@ export const CursorOverlay = () => {
                 width: '6px',
                 height: '6px',
                 borderRadius: '50%',
-                background: isProcessing ? colors.warning : status === 'success' ? colors.success : status === 'error' ? colors.error : colors.textTertiary,
-                boxShadow: isProcessing ? '0 0 8px rgba(251,191,36,0.5)' : 'none',
+                background: mode === 'add' ? colors.success : 
+                  isProcessing ? colors.warning : status === 'success' ? colors.success : status === 'error' ? colors.error : colors.textTertiary,
+                boxShadow: mode === 'add' ? `0 0 8px ${colors.successSoft}` :
+                  isProcessing ? '0 0 8px rgba(251,191,36,0.5)' : 'none',
                 animation: isProcessing ? 'pulse 1s infinite' : 'none',
               }} />
-              <span style={{ color: colors.textSecondary, fontSize: '12px', fontFamily: 'ui-monospace, monospace' }}>
-                {targets[0]?.fileName?.split('/').pop()}
-                {targets.length > 1 && (
-                  <span style={{ color: colors.accent, marginLeft: '6px' }}>
-                    +{targets.length - 1} more
-                  </span>
-                )}
-              </span>
+              {mode === 'add' ? (
+                <span style={{ color: colors.success, fontSize: '12px', fontWeight: 600 }}>
+                  ＋ ADD MODE
+                </span>
+              ) : (
+                <span style={{ color: colors.textSecondary, fontSize: '12px', fontFamily: 'ui-monospace, monospace' }}>
+                  {targets[0]?.fileName?.split('/').pop()}
+                  {targets.length > 1 && (
+                    <span style={{ color: colors.brand, marginLeft: '6px' }}>
+                      +{targets.length - 1} more
+                    </span>
+                  )}
+                </span>
+              )}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <span style={{ color: colors.textTertiary, fontSize: '11px', fontFamily: 'ui-monospace, monospace' }}>
-                L{targets[0]?.lineNumber || '~'}
-              </span>
+              {mode === 'add' ? (
+                <span style={{ color: colors.textTertiary, fontSize: '10px' }}>
+                  Adding to {targets[0]?.fileName?.split('/').pop()}
+                </span>
+              ) : (
+                <span style={{ color: colors.textTertiary, fontSize: '11px', fontFamily: 'ui-monospace, monospace' }}>
+                  L{targets[0]?.lineNumber || '~'}
+                </span>
+              )}
               {!isProcessing && (
                 <button
                   onClick={closeChat}
@@ -994,6 +1094,64 @@ export const CursorOverlay = () => {
               )}
             </div>
           </div>
+
+          {/* Position Picker (Add Mode) */}
+          {mode === 'add' && showPositionPicker && (
+            <div style={{
+              padding: '16px',
+              borderBottom: `1px solid ${colors.borderSubtle}`,
+              background: `${colors.successSoft}`,
+            }}>
+              <div style={{
+                fontSize: '11px',
+                color: colors.textSecondary,
+                marginBottom: '12px',
+              }}>
+                Where should the new element be added?
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                {[
+                  { id: 'before', label: '⬆️ Before', desc: `Add before this <${targets[0]?.elementTag}>` },
+                  { id: 'after', label: '⬇️ After', desc: `Add after this <${targets[0]?.elementTag}>` },
+                  { id: 'inside-start', label: '📥 Inside (first)', desc: 'As first child of container' },
+                  { id: 'inside-end', label: '📤 Inside (last)', desc: 'As last child of container' },
+                ].map(pos => (
+                  <button
+                    key={pos.id}
+                    onClick={() => {
+                      setAddPosition(pos.id as any);
+                      setShowPositionPicker(false);
+                    }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '10px 12px',
+                      background: addPosition === pos.id ? colors.brand : colors.surface,
+                      border: `1px solid ${addPosition === pos.id ? colors.brand : colors.borderDefault}`,
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    <span style={{ 
+                      color: addPosition === pos.id ? colors.textPrimary : colors.textSecondary,
+                      fontSize: '13px',
+                      fontWeight: 500,
+                    }}>
+                      {pos.label}
+                    </span>
+                    <span style={{ 
+                      color: addPosition === pos.id ? 'rgba(255,255,255,0.7)' : colors.textTertiary,
+                      fontSize: '11px',
+                    }}>
+                      {pos.desc}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Selected Elements (shown when idle or when multiple elements) */}
           {!isComplete && targets.length > 0 && (
@@ -1186,7 +1344,7 @@ export const CursorOverlay = () => {
                 value={instruction}
                 onChange={e => !isProcessing && setInstruction(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && !e.shiftKey && !isProcessing && (e.preventDefault(), sendCommand())}
-                placeholder={isProcessing ? "Processing..." : "Describe the change..."}
+                placeholder={isProcessing ? "Processing..." : mode === 'add' ? "Describe what to add..." : "Describe the change..."}
                 style={{
                   width: '100%',
                   background: 'transparent',
