@@ -3,17 +3,19 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { init, getStack, getFileName } from 'react-grab/core';
 
 // Modular imports
-import type { 
-  StreamEvent, 
-  RevisionStep, 
-  Target, 
-  FileDiff, 
-  FileReference, 
-  FileSearchResult 
+import type {
+  StreamEvent,
+  RevisionStep,
+  Target,
+  FileDiff,
+  FileReference,
+  FileSearchResult
 } from './src/client/types';
 import { DEBUG, log, API_BASE, MODELS, PROMPT_TEMPLATES, colors } from './src/client/constants';
 import { cleanFilePath, inferFileFromRoute, getStoredValue, setStoredValue } from './src/client/utils';
 import { Dropdown, Toggle, StreamStep } from './src/client/components';
+import { TitaniumShell } from './src/client/components/Titanium';
+import { ArrowUp, Paperclip, Sparkles, X, Image as ImageIcon, FileText, Zap } from 'lucide-react';
 
 // ============================================================================
 // MAIN COMPONENT
@@ -28,7 +30,7 @@ export const CursorOverlay = () => {
   const [instruction, setInstruction] = useState("");
   const [status, setStatus] = useState<'idle' | 'streaming' | 'success' | 'error'>('idle');
   const [grabApi, setGrabApi] = useState<any>(null);
-  
+
   // Add Mode state
   const [mode, setMode] = useState<'edit' | 'add'>('edit');
   const [addPosition, setAddPosition] = useState<'before' | 'after' | 'inside-start' | 'inside-end'>('after');
@@ -40,10 +42,10 @@ export const CursorOverlay = () => {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [agentSessionId, setAgentSessionId] = useState<string | null>(null); // cursor-agent's session for --resume
   const [canRevert, setCanRevert] = useState(false);
-  const [filesChanged, setFilesChanged] = useState<{path: string; lines: number; isNew?: boolean}[]>([]);
+  const [filesChanged, setFilesChanged] = useState<{ path: string; lines: number; isNew?: boolean }[]>([]);
   const eventsContainerRef = useRef<HTMLDivElement>(null);
   const instructionInputRef = useRef<HTMLTextAreaElement>(null);
-  
+
   // Revision history - tracks all edits in the current revision chain
   const [revisionHistory, setRevisionHistory] = useState<RevisionStep[]>([]);
   const currentInstructionRef = useRef<string>(''); // Track instruction at submit time
@@ -55,20 +57,20 @@ export const CursorOverlay = () => {
   const [chatId, setChatId] = useState<string | null>(null);
   const [promptTemplate, setPromptTemplate] = useState(() => getStoredValue('cursor-bridge-template', 'designer'));
   const [customPrompt, setCustomPrompt] = useState(() => getStoredValue('cursor-bridge-custom-prompt', ''));
-  
+
   // UI state
   const [showPromptEditor, setShowPromptEditor] = useState(false);
   const [editingPrompt, setEditingPrompt] = useState('');
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const dragRef = useRef<{ startX: number; startY: number; initialX: number; initialY: number } | null>(null);
-  
+
   // Diff panel state
   const [showDiffPanel, setShowDiffPanel] = useState(false);
   const [diffData, setDiffData] = useState<FileDiff[]>([]);
   const [diffLoading, setDiffLoading] = useState(false);
   const [activeDiffFile, setActiveDiffFile] = useState(0);
-  
+
   // File references & attachments state
   const [fileReferences, setFileReferences] = useState<FileReference[]>([]);
   const [showFileSearch, setShowFileSearch] = useState(false);
@@ -119,7 +121,7 @@ export const CursorOverlay = () => {
     if (!host || !host.shadowRoot) {
       return false;
     }
-    
+
     // The shadowRoot contains the renderer where filter is applied
     // Find the first div child which should be the rendererRoot
     const rendererRoot = host.shadowRoot.querySelector('div');
@@ -130,7 +132,7 @@ export const CursorOverlay = () => {
     }
     return false;
   }, []);
-  
+
   // Update colors when mode changes
   useEffect(() => {
     if (inspectorActive) {
@@ -146,7 +148,7 @@ export const CursorOverlay = () => {
   // ============================================================================
   // FILE REFERENCES & @ AUTOCOMPLETE
   // ============================================================================
-  
+
   const searchFiles = useCallback(async (query: string) => {
     try {
       const res = await fetch(`${API_BASE}/api/files?search=${encodeURIComponent(query)}`);
@@ -158,16 +160,16 @@ export const CursorOverlay = () => {
       log('[file-search] Error:', e);
     }
   }, []);
-  
+
   const handleInstructionChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const value = e.target.value;
     const cursorPos = e.target.selectionStart || 0;
     setInstruction(value);
     setCursorPosition(cursorPos);
-    
+
     const textBeforeCursor = value.slice(0, cursorPos);
     const atMatch = textBeforeCursor.match(/@([^\s@]*)$/);
-    
+
     if (atMatch) {
       const query = atMatch[1];
       setFileSearchQuery(query);
@@ -179,12 +181,12 @@ export const CursorOverlay = () => {
       setFileSearchResults([]);
     }
   };
-  
+
   const selectFileReference = (file: FileSearchResult) => {
     const textBeforeCursor = instruction.slice(0, cursorPosition);
     const textAfterCursor = instruction.slice(cursorPosition);
     const atMatch = textBeforeCursor.match(/@([^\s@]*)$/);
-    
+
     if (atMatch) {
       const beforeAt = textBeforeCursor.slice(0, atMatch.index);
       setInstruction(beforeAt + '@' + file.path + ' ' + textAfterCursor);
@@ -196,7 +198,7 @@ export const CursorOverlay = () => {
     setFileSearchResults([]);
     instructionInputRef.current?.focus();
   };
-  
+
   const handleInstructionKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (showFileSearch && fileSearchResults.length > 0) {
       if (e.key === 'ArrowDown') { e.preventDefault(); setFileSearchIndex(prev => Math.min(prev + 1, fileSearchResults.length - 1)); }
@@ -208,7 +210,7 @@ export const CursorOverlay = () => {
       sendCommand();
     }
   };
-  
+
   const handleImageUpload = async (file: File) => {
     if (!file.type.startsWith('image/')) return;
     const reader = new FileReader();
@@ -228,7 +230,7 @@ export const CursorOverlay = () => {
     };
     reader.readAsDataURL(file);
   };
-  
+
   const removeFileReference = (path: string) => {
     setFileReferences(prev => prev.filter(f => f.path !== path));
     setInstruction(prev => prev.replace(new RegExp(`@${path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s?`, 'g'), ''));
@@ -237,42 +239,42 @@ export const CursorOverlay = () => {
   useEffect(() => {
     setMounted(true);
     const api = init({
-      theme: { enabled: true, hue: 0, elementLabel: { backgroundColor: colors.surface, textColor: colors.textPrimary }},
+      theme: { enabled: true, hue: 0, elementLabel: { backgroundColor: colors.surface, textColor: colors.textPrimary } },
       onElementSelect: async (element: Element) => {
         log("Selected element:", element.tagName, element.className?.substring(0, 50));
-        
+
         const stack = await getStack(element);
         const rawFileName = getFileName(stack);
         let fileName = cleanFilePath(rawFileName);
-        
+
         const frameWithSource = stack.find(frame => frame.source !== null);
         let lineNumber = frameWithSource?.source?.lineNumber ?? 0;
         const componentName = frameWithSource?.name ?? element.tagName.toLowerCase();
-        
+
         // Capture FULL element details - this is what cursor-agent needs!
         const elementTag = element.tagName.toLowerCase();
         const elementClasses = element.className || '';
         const elementText = element.textContent?.trim().substring(0, 100) || '';
-        const elementHTML = element.outerHTML.length > 500 
+        const elementHTML = element.outerHTML.length > 500
           ? element.outerHTML.substring(0, 500) + '...'
           : element.outerHTML;
-        
+
         // Build parent context from React component stack
         const parentContext = stack
           .slice(0, 6)
           .map(frame => frame.name)
           .filter((name, i, arr) => name && arr.indexOf(name) === i)
           .join(' → ');
-        
+
         if (!fileName) {
           fileName = inferFileFromRoute();
           lineNumber = 0;
         }
-        
+
         const newTarget: Target = { fileName, lineNumber, componentName, elementText, elementTag, elementClasses, elementHTML, parentContext };
         const currentTargets = targetsRef.current;
         const currentMode = modeRef.current;
-        
+
         if (currentMode === 'add') {
           setTargets([newTarget]);
           setAddPosition('after'); // Default to "after" - user can change if needed
@@ -285,11 +287,11 @@ export const CursorOverlay = () => {
           api.deactivate();
           return;
         }
-        
+
         if (currentTargets.length > 0 && currentTargets.length < 5) {
-          const isDuplicate = currentTargets.some(t => 
-            t.fileName === fileName && 
-            t.lineNumber === lineNumber && 
+          const isDuplicate = currentTargets.some(t =>
+            t.fileName === fileName &&
+            t.lineNumber === lineNumber &&
             t.elementTag === elementTag &&
             t.elementClasses === elementClasses
           );
@@ -304,7 +306,7 @@ export const CursorOverlay = () => {
           setCanRevert(false);
           setSessionId(null);
         }
-        
+
         setActive(true);
         setInspectorActive(false);
         api.deactivate();
@@ -329,9 +331,9 @@ export const CursorOverlay = () => {
 
   // Drag handlers
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    if ((e.target as HTMLElement).tagName === 'TEXTAREA' || 
-        (e.target as HTMLElement).tagName === 'BUTTON' ||
-        (e.target as HTMLElement).tagName === 'INPUT') return;
+    if ((e.target as HTMLElement).tagName === 'TEXTAREA' ||
+      (e.target as HTMLElement).tagName === 'BUTTON' ||
+      (e.target as HTMLElement).tagName === 'INPUT') return;
     setIsDragging(true);
     dragRef.current = { startX: e.clientX, startY: e.clientY, initialX: position.x, initialY: position.y };
   }, [position]);
@@ -358,7 +360,7 @@ export const CursorOverlay = () => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Ignore key repeats (held down keys)
       if (e.repeat) return;
-      
+
       // Escape key
       if (e.key === 'Escape') {
         if (showPositionPicker) {
@@ -370,7 +372,7 @@ export const CursorOverlay = () => {
           closeChat();
         }
       }
-      
+
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'c') {
         if (modeRef.current !== 'edit') {
           setMode('edit');
@@ -378,7 +380,7 @@ export const CursorOverlay = () => {
         }
         setInspectorActive(true);
       }
-      
+
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'e') {
         e.preventDefault();
         e.stopPropagation();
@@ -389,7 +391,7 @@ export const CursorOverlay = () => {
         setCanRevert(false);
         setSessionId(null);
         setActive(false);
-        
+
         document.dispatchEvent(new KeyboardEvent('keydown', {
           key: 'c', code: 'KeyC', metaKey: true, ctrlKey: e.ctrlKey, bubbles: true, cancelable: true,
         }));
@@ -403,18 +405,18 @@ export const CursorOverlay = () => {
   // Send command with streaming
   const sendCommand = async () => {
     if (targets.length === 0 || !instruction.trim() || status === 'streaming') return;
-    
+
     const userInstruction = instruction;
     currentInstructionRef.current = userInstruction; // Track for revision history
     setStatus('streaming');
     setEvents([]);
     setCanRevert(false);
     setShowPositionPicker(false); // Hide position picker when sending
-    
+
     // For backwards compatibility, use first target for primary fields
     // Also send full targets array for multi-element support
     const primaryTarget = targets[0];
-    
+
     try {
       const response = await fetch('http://localhost:3333/cursor-command-stream', {
         method: 'POST',
@@ -454,16 +456,16 @@ export const CursorOverlay = () => {
       let buffer = '';
       let receivedComplete = false;
       let lastEventTime = Date.now();
-      
+
       // Timeout checker - if no events for 30s, assume connection died
       const timeoutCheck = setInterval(() => {
         if (Date.now() - lastEventTime > 30000) {
           clearInterval(timeoutCheck);
           if (!receivedComplete) {
-            setEvents(prev => [...prev, { 
-              id: `timeout-${Date.now()}`, 
-              type: 'error', 
-              text: 'Connection timed out. The agent may still be processing. Try again if needed.' 
+            setEvents(prev => [...prev, {
+              id: `timeout-${Date.now()}`,
+              type: 'error',
+              text: 'Connection timed out. The agent may still be processing. Try again if needed.'
             }]);
             setStatus('error');
           }
@@ -485,14 +487,14 @@ export const CursorOverlay = () => {
               try {
                 const data = JSON.parse(line.slice(6));
                 const eventId = `${Date.now()}-${Math.random()}`;
-                
+
                 if (data.type === 'complete') {
                   receivedComplete = true;
                   setSessionId(data.sessionId);
                   setAgentSessionId(data.agentSessionId); // Store for --resume revisions
                   setCanRevert(data.canRevert);
                   setStatus(data.success ? 'success' : 'error');
-                  
+
                   // Store detailed files changed info
                   const hasChanges = Array.isArray(data.filesChanged) && data.filesChanged.length > 0;
                   if (hasChanges) {
@@ -500,38 +502,38 @@ export const CursorOverlay = () => {
                   } else {
                     setFilesChanged([]);
                   }
-                  
+
                   // Add to revision history if successful with changes
                   if (data.success && hasChanges) {
                     const fileCount = data.filesChanged.length;
                     const totalLines = data.filesChanged.reduce((sum: number, f: any) => sum + (f.lines || 0), 0);
                     const summary = `Modified ${fileCount} file${fileCount > 1 ? 's' : ''} (${totalLines} lines)`;
-                    
+
                     setRevisionHistory(prev => [...prev, {
                       sessionId: data.sessionId,
                       instruction: currentInstructionRef.current,
                       summary,
                       filesChanged: data.filesChanged
                     }]);
-                    
-                    setEvents(prev => [...prev, { 
-                      id: eventId, 
-                      type: 'result', 
-                      success: true, 
-                      text: summary 
+
+                    setEvents(prev => [...prev, {
+                      id: eventId,
+                      type: 'result',
+                      success: true,
+                      text: summary
                     }]);
                   } else if (data.success && !hasChanges) {
-                    setEvents(prev => [...prev, { 
-                      id: eventId, 
-                      type: 'result', 
-                      success: true, 
-                      text: 'No changes were made' 
+                    setEvents(prev => [...prev, {
+                      id: eventId,
+                      type: 'result',
+                      success: true,
+                      text: 'No changes were made'
                     }]);
                   } else if (!data.success) {
-                    setEvents(prev => [...prev, { 
-                      id: eventId, 
-                      type: 'error', 
-                      text: data.errorMessage || 'Operation failed' 
+                    setEvents(prev => [...prev, {
+                      id: eventId,
+                      type: 'error',
+                      text: data.errorMessage || 'Operation failed'
                     }]);
                   }
                 } else if (data.type === 'error') {
@@ -540,17 +542,17 @@ export const CursorOverlay = () => {
                 } else {
                   setEvents(prev => [...prev, { ...data, id: eventId }]);
                 }
-              } catch (e) {}
+              } catch (e) { }
             }
           }
         }
-        
+
         // Stream ended - check if we got a complete event
         if (!receivedComplete) {
-          setEvents(prev => [...prev, { 
-            id: `disconnect-${Date.now()}`, 
-            type: 'error', 
-            text: 'Connection closed unexpectedly. Try again.' 
+          setEvents(prev => [...prev, {
+            id: `disconnect-${Date.now()}`,
+            type: 'error',
+            text: 'Connection closed unexpectedly. Try again.'
           }]);
           setStatus('error');
         }
@@ -558,10 +560,10 @@ export const CursorOverlay = () => {
         clearInterval(timeoutCheck);
       }
     } catch (e: any) {
-      setEvents(prev => [...prev, { 
-        id: `error-${Date.now()}`, 
-        type: 'error', 
-        text: e.message?.includes('fetch') ? 'Bridge not running. Run: npx cursor-bridge' : e.message 
+      setEvents(prev => [...prev, {
+        id: `error-${Date.now()}`,
+        type: 'error',
+        text: e.message?.includes('fetch') ? 'Bridge not running. Run: npx cursor-bridge' : e.message
       }]);
       setStatus('error');
     }
@@ -570,26 +572,26 @@ export const CursorOverlay = () => {
   // Cancel running operation
   const handleCancel = () => {
     setStatus('error');
-    setEvents(prev => [...prev, { 
-      id: `cancel-${Date.now()}`, 
-      type: 'error', 
-      text: 'Cancelled by user' 
+    setEvents(prev => [...prev, {
+      id: `cancel-${Date.now()}`,
+      type: 'error',
+      text: 'Cancelled by user'
     }]);
   };
 
   // Revert changes - keeps panel open for another attempt
   const handleRevert = async () => {
     if (!sessionId) return;
-    
+
     try {
       const response = await fetch('http://localhost:3333/revert', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId })
       });
-      
+
       const data = await response.json();
-      
+
       if (data.success) {
         // Reset to idle state for another attempt (don't close panel)
         setStatus('idle');
@@ -602,10 +604,10 @@ export const CursorOverlay = () => {
         setRevisionHistory([]); // Clear revision chain - starting fresh
       }
     } catch (e: any) {
-      setEvents(prev => [...prev, { 
-        id: `error-${Date.now()}`, 
-        type: 'error', 
-        text: 'Failed to revert' 
+      setEvents(prev => [...prev, {
+        id: `error-${Date.now()}`,
+        type: 'error',
+        text: 'Failed to revert'
       }]);
     }
   };
@@ -631,7 +633,7 @@ export const CursorOverlay = () => {
   // Undo All - revert all revisions in the chain
   const handleUndoAll = async () => {
     if (revisionHistory.length === 0) return;
-    
+
     try {
       // Revert all sessions in reverse order (most recent first)
       for (const step of [...revisionHistory].reverse()) {
@@ -641,7 +643,7 @@ export const CursorOverlay = () => {
           body: JSON.stringify({ sessionId: step.sessionId })
         });
       }
-      
+
       // Also revert the current session if it exists
       if (sessionId) {
         await fetch('http://localhost:3333/revert', {
@@ -650,14 +652,14 @@ export const CursorOverlay = () => {
           body: JSON.stringify({ sessionId })
         });
       }
-      
+
       // Clear everything and close
       closeChat();
     } catch (e: any) {
-      setEvents(prev => [...prev, { 
-        id: `error-${Date.now()}`, 
-        type: 'error', 
-        text: 'Failed to undo all changes' 
+      setEvents(prev => [...prev, {
+        id: `error-${Date.now()}`,
+        type: 'error',
+        text: 'Failed to undo all changes'
       }]);
     }
   };
@@ -694,7 +696,7 @@ export const CursorOverlay = () => {
   // Fetch and show diff
   const handleViewDiff = async () => {
     if (!sessionId) return;
-    
+
     setDiffLoading(true);
     try {
       const response = await fetch('http://localhost:3333/diff', {
@@ -702,7 +704,7 @@ export const CursorOverlay = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId })
       });
-      
+
       const data = await response.json();
       if (data.success && data.diffs.length > 0) {
         setDiffData(data.diffs);
@@ -758,7 +760,7 @@ export const CursorOverlay = () => {
   return (
     <>
       {/* Enable Agent Button (hidden - use CMD+C to activate) */}
-      <div 
+      <div
         onClick={toggleInspector}
         style={{
           display: 'none', // Hidden - use CMD+C
@@ -792,7 +794,8 @@ export const CursorOverlay = () => {
 
       {/* Main Chat Panel */}
       {active && (
-        <div
+        <TitaniumShell
+          mode={mode}
           onMouseDown={handleMouseDown}
           style={{
             position: 'fixed',
@@ -800,778 +803,362 @@ export const CursorOverlay = () => {
             left: `calc(50% + ${position.x}px)`,
             transform: 'translateX(-50%)',
             zIndex: 99999,
-            width: '500px',
+            width: '560px', // Slightly wider for premium feel
             maxHeight: '70vh',
-            background: colors.surface,
-            border: `1px solid ${status === 'success' ? colors.success : status === 'error' ? colors.error : colors.borderDefault}`,
-            borderRadius: '16px',
-            boxShadow: `inset 0 1px 0 rgba(255,255,255,0.05), 0 25px 60px rgba(0,0,0,0.5)`,
-            fontFamily: 'system-ui, -apple-system, sans-serif',
             cursor: isDragging ? 'grabbing' : 'default',
             userSelect: 'none',
             display: 'flex',
             flexDirection: 'column',
-            transition: 'border-color 0.2s ease',
           }}
         >
-          {/* Header */}
+          {/* Header / Status Area */}
           <div style={{
-            padding: '14px 16px',
-            borderBottom: `1px solid ${mode === 'add' ? colors.addModeSoft : colors.editModeSoft}`,
+            padding: '20px 24px 10px 24px',
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
-            cursor: 'grab',
             flexShrink: 0,
-            background: mode === 'add' ? `${colors.addModeSoft}` : `${colors.editModeSoft}`,
-            transition: 'all 0.2s ease',
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              {/* Status Dot */}
               <div style={{
-                width: '6px',
-                height: '6px',
+                width: '8px',
+                height: '8px',
                 borderRadius: '50%',
-                background: mode === 'add' ? colors.addMode : 
+                background: mode === 'add' ? colors.addMode :
                   isProcessing ? colors.warning : status === 'success' ? colors.success : status === 'error' ? colors.error : colors.editMode,
-                boxShadow: mode === 'add' ? `0 0 8px ${colors.addModeGlow}` :
-                  isProcessing ? '0 0 8px rgba(251,191,36,0.5)' : `0 0 8px ${colors.editModeGlow}`,
+                boxShadow: mode === 'add' ? `0 0 10px ${colors.addModeGlow}` :
+                  isProcessing ? '0 0 10px rgba(251,191,36,0.5)' : `0 0 10px ${colors.editModeGlow}`,
                 animation: isProcessing ? 'pulse 1s infinite' : 'none',
               }} />
-              {mode === 'add' ? (
-                <span style={{ color: colors.addMode, fontSize: '12px', fontWeight: 600, letterSpacing: '0.5px' }}>
-                  ＋ ADD {addPosition.toUpperCase().replace('-', ' ')}
+
+              {/* Context Info */}
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                <span style={{
+                  color: colors.textPrimary,
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  letterSpacing: '-0.01em'
+                }}>
+                  {mode === 'add' ? 'Add to Codebase' : 'Edit Codebase'}
                 </span>
-              ) : (
-                <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span style={{ color: colors.editMode, fontSize: '12px', fontWeight: 600, letterSpacing: '0.5px' }}>
-                    ✎ EDIT
-                  </span>
-                  <span style={{ color: colors.textSecondary, fontSize: '11px', fontFamily: 'ui-monospace, monospace' }}>
-                    {targets[0]?.fileName?.split('/').pop()}
-                    {targets.length > 1 && (
-                      <span style={{ color: colors.editMode, marginLeft: '6px' }}>
-                        +{targets.length - 1} more
-                      </span>
-                    )}
-                  </span>
+                <span style={{
+                  color: colors.textTertiary,
+                  fontSize: '11px',
+                  fontFamily: 'ui-monospace, monospace'
+                }}>
+                  {targets.length > 0 ? (
+                    <>
+                      {targets[0]?.fileName?.split('/').pop()}
+                      {targets.length > 1 && ` +${targets.length - 1}`}
+                      <span style={{ margin: '0 6px', opacity: 0.3 }}>|</span>
+                      L{targets[0]?.lineNumber || '~'}
+                    </>
+                  ) : 'No selection'}
                 </span>
-              )}
+              </div>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              {mode === 'add' ? (
-                <>
-                  <span style={{ color: colors.textTertiary, fontSize: '10px' }}>
-                    &lt;{targets[0]?.elementTag}&gt;
-                  </span>
-                  {!isProcessing && (
-                    <button
-                      onClick={() => setShowPositionPicker(!showPositionPicker)}
-                      style={{
-                        background: colors.addModeSoft,
-                        border: `1px solid ${colors.addMode}40`,
-                        borderRadius: '4px',
-                        padding: '3px 8px',
-                        color: colors.addMode,
-                        fontSize: '10px',
-                        cursor: 'pointer',
-                        transition: 'all 0.15s ease',
-                      }}
-                    >
-                      Change ▾
-                    </button>
-                  )}
-                </>
-              ) : (
-                <span style={{ color: colors.textTertiary, fontSize: '11px', fontFamily: 'ui-monospace, monospace' }}>
-                  L{targets[0]?.lineNumber || '~'}
-                </span>
-              )}
-              {!isProcessing && (
-                <button
-                  onClick={closeChat}
-                  style={{
-                    background: 'transparent',
-                    border: 'none',
-                    color: colors.textTertiary,
-                    fontSize: '16px',
-                    cursor: 'pointer',
-                    padding: '0 4px',
-                    lineHeight: 1,
-                  }}
-                >
-                  ×
-                </button>
-              )}
-            </div>
+
+            {/* Close Button */}
+            <button
+              onClick={closeChat}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: colors.textTertiary,
+                cursor: 'pointer',
+                padding: '4px',
+                borderRadius: '4px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'all 0.2s ease',
+              }}
+              onMouseEnter={e => e.currentTarget.style.color = colors.textPrimary}
+              onMouseLeave={e => e.currentTarget.style.color = colors.textTertiary}
+            >
+              <X size={16} />
+            </button>
           </div>
 
-          {/* Position Picker (Add Mode) - Compact dropdown style */}
-          {mode === 'add' && showPositionPicker && (
-            <div style={{
-              padding: '12px 16px',
-              borderBottom: `1px solid ${colors.addModeSoft}`,
-              background: `linear-gradient(180deg, ${colors.addModeSoft} 0%, transparent 100%)`,
-            }}>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                {[
-                  { id: 'before', label: '⬆ Before', short: true },
-                  { id: 'after', label: '⬇ After', short: true },
-                  { id: 'inside-start', label: '↳ First child', short: true },
-                  { id: 'inside-end', label: '↲ Last child', short: true },
-                ].map(pos => (
-                  <button
-                    key={pos.id}
-                    onClick={() => {
-                      setAddPosition(pos.id as any);
-                      setShowPositionPicker(false);
-                    }}
-                    style={{
-                      padding: '6px 12px',
-                      background: addPosition === pos.id ? colors.addMode : colors.surface,
-                      border: `1px solid ${addPosition === pos.id ? colors.addMode : colors.borderDefault}`,
-                      borderRadius: '6px',
-                      cursor: 'pointer',
-                      transition: 'all 0.15s ease',
-                      color: addPosition === pos.id ? colors.textPrimary : colors.textSecondary,
-                      fontSize: '11px',
-                      fontWeight: 500,
-                    }}
-                  >
-                    {pos.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
+          {/* Content Area */}
+          <div style={{
+            padding: '0 12px 12px 12px', // Tighter padding (was 24px)
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '12px',
+            flex: 1,
+            overflow: 'hidden',
+          }}>
 
-          {/* Selected Elements (shown when idle or when multiple elements) */}
-          {!isComplete && targets.length > 0 && (
-            <div style={{
-              padding: '10px 16px',
-              borderBottom: `1px solid ${colors.borderSubtle}`,
-              background: `${colors.surface}30`,
-            }}>
-              <div style={{ 
-                fontSize: '10px', 
-                textTransform: 'uppercase', 
-                letterSpacing: '0.5px',
-                color: colors.textTertiary,
-                marginBottom: '8px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-              }}>
-                <span>Selected Elements ({targets.length}/5)</span>
-                {targets.length < 5 && !isProcessing && (
-                  <span style={{
-                    color: colors.textTertiary,
-                    fontSize: '9px',
-                    opacity: 0.7,
-                  }}>
-                    ⌘C to add more
-                  </span>
-                )}
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                {targets.map((t, i) => (
-                  <div key={`${t.fileName}-${t.lineNumber}-${i}`} style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    padding: '4px 8px',
-                    background: colors.elevated,
-                    borderRadius: '4px',
-                    fontSize: '11px',
-                  }}>
-                    <span style={{ 
-                      color: colors.accent, 
-                      fontSize: '10px',
-                      fontWeight: 600,
-                      width: '16px',
-                    }}>
-                      {i + 1}
-                    </span>
-                    <span style={{ 
-                      color: colors.textTertiary,
-                      fontFamily: 'ui-monospace, monospace',
-                    }}>
-                      &lt;{t.elementTag}&gt;
-                    </span>
-                    <span style={{ 
-                      color: colors.textSecondary,
-                      fontFamily: 'ui-monospace, monospace',
-                      flex: 1,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                    }}>
-                      {t.fileName?.split('/').pop()}
-                    </span>
-                    <span style={{ color: colors.textTertiary, fontSize: '10px' }}>
-                      L{t.lineNumber}
-                    </span>
-                    {targets.length > 1 && !isProcessing && (
-                      <button
-                        onClick={() => handleRemoveTarget(i)}
-                        style={{
-                          background: 'transparent',
-                          border: 'none',
-                          color: colors.textTertiary,
-                          fontSize: '12px',
-                          cursor: 'pointer',
-                          padding: '0 2px',
-                          lineHeight: 1,
-                        }}
-                      >
-                        ×
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Revision History (shown when there are previous revisions) */}
-          {revisionHistory.length > 0 && (
-            <div style={{
-              padding: '12px 16px',
-              borderBottom: `1px solid ${colors.borderSubtle}`,
-              background: `${colors.surface}40`,
-              maxHeight: '120px',
-              overflowY: 'auto',
-            }}>
-              <div style={{ 
-                fontSize: '10px', 
-                textTransform: 'uppercase', 
-                letterSpacing: '0.5px',
-                color: colors.textTertiary,
-                marginBottom: '10px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                position: 'sticky',
-                top: 0,
-                background: `${colors.surface}`,
-                padding: '2px 0',
-                zIndex: 1,
-              }}>
-                <span style={{ color: colors.accent }}>⟲</span> Revision History ({revisionHistory.length})
-              </div>
-              {revisionHistory.map((step, i) => {
-                // Truncate long instructions
-                const truncatedInstruction = step.instruction.length > 80 
-                  ? step.instruction.substring(0, 80) + '...' 
-                  : step.instruction;
-                
-                return (
-                  <div key={step.sessionId} style={{
-                    marginBottom: i === revisionHistory.length - 1 ? '0' : '10px',
-                    paddingLeft: '12px',
-                    borderLeft: `2px solid ${colors.accent}40`,
-                  }}>
-                    <div style={{
-                      fontSize: '11px',
-                      color: colors.textSecondary,
-                      marginBottom: '3px',
-                      display: 'flex',
-                      alignItems: 'flex-start',
-                      gap: '6px',
-                    }}>
-                      <span style={{ 
-                        color: colors.textTertiary,
-                        fontSize: '10px',
-                        fontWeight: 600,
-                        flexShrink: 0,
-                      }}>#{i + 1}</span>
-                      <span style={{ 
-                        color: colors.textPrimary,
-                        wordBreak: 'break-word',
-                        lineHeight: 1.4,
-                      }}>"{truncatedInstruction}"</span>
-                    </div>
-                    <div style={{
-                      fontSize: '10px',
-                      color: colors.textTertiary,
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '4px',
-                      marginLeft: '20px',
-                    }}>
-                      <span style={{ color: colors.success }}>✓</span>
-                      {step.summary}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          {/* Events/Steps Area (shown when streaming or complete) */}
-          {events.length > 0 && (
-            <div 
-              ref={eventsContainerRef}
-              style={{ 
-                padding: '12px 16px',
-                maxHeight: '200px',
-                overflowY: 'auto',
-                borderBottom: `1px solid ${colors.borderSubtle}`,
-                flexShrink: 0,
-              }}
-            >
-              {events.map((event, i) => (
-                <StreamStep key={event.id} event={event} isLast={i === events.length - 1} />
-              ))}
-            </div>
-          )}
-
-          {/* Input Area */}
-          {!isComplete && (
-            <div 
-              style={{ padding: '16px', flexShrink: 0, position: 'relative' }}
-              onDrop={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                const files = Array.from(e.dataTransfer.files);
-                files.forEach(file => handleImageUpload(file));
-              }}
-              onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
-            >
-              {/* File References Display */}
-              {fileReferences.length > 0 && (
-                <div style={{
-                  display: 'flex',
-                  flexWrap: 'wrap',
-                  gap: '6px',
+            {/* Stream/History Area */}
+            {(events.length > 0 || revisionHistory.length > 0) && (
+              <div
+                ref={eventsContainerRef}
+                style={{
+                  flex: 1,
+                  overflowY: 'auto',
+                  minHeight: '100px',
                   marginBottom: '10px',
-                }}>
-                  {fileReferences.map((file, idx) => (
-                    <div
-                      key={file.path}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '6px',
-                        padding: '4px 8px',
-                        background: file.isImage ? 'rgba(6,182,212,0.15)' : 'rgba(52,211,153,0.15)',
-                        borderRadius: '6px',
-                        fontSize: '11px',
-                        color: file.isImage ? '#06B6D4' : '#34D399',
-                        border: `1px solid ${file.isImage ? 'rgba(6,182,212,0.3)' : 'rgba(52,211,153,0.3)'}`,
-                      }}
-                    >
-                      {file.isImage && file.previewUrl && (
-                        <img 
-                          src={file.previewUrl} 
-                          alt={file.name}
-                          style={{ width: 18, height: 18, borderRadius: 3, objectFit: 'cover' }}
-                        />
-                      )}
-                      <span>{file.isImage ? '🖼' : '📄'}</span>
-                      <span style={{ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {file.name}
-                      </span>
-                      <button
-                        onClick={() => removeFileReference(file.path)}
-                        style={{
-                          background: 'transparent',
-                          border: 'none',
-                          color: 'inherit',
-                          cursor: 'pointer',
-                          padding: 0,
-                          fontSize: '12px',
-                          opacity: 0.7,
-                        }}
-                      >
-                        ×
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-              
-              {/* Textarea with @ autocomplete */}
-              <div style={{ position: 'relative' }}>
-                <textarea
-                  ref={instructionInputRef}
-                  autoFocus
-                  rows={3}
-                  disabled={isProcessing}
-                  value={instruction}
-                  onChange={!isProcessing ? handleInstructionChange : undefined}
-                  onKeyDown={!isProcessing ? handleInstructionKeyDown : undefined}
-                  placeholder={isProcessing ? "Processing..." : mode === 'add' ? "Describe what to add... (@ for files, drop images)" : "Describe the change... (@ for files, drop images)"}
-                  style={{
-                    width: '100%',
-                    background: 'transparent',
-                    border: 'none',
-                    outline: 'none',
-                    color: colors.textPrimary,
-                    fontSize: '14px',
-                    fontFamily: 'system-ui, sans-serif',
-                    lineHeight: 1.6,
-                    resize: 'none',
-                    opacity: isProcessing ? 0.5 : 1,
-                  }}
-                />
-                
-                {/* @ Autocomplete Dropdown */}
-                {showFileSearch && fileSearchResults.length > 0 && (
-                  <div style={{
-                    position: 'absolute',
-                    bottom: '100%',
-                    left: 0,
-                    right: 0,
-                    maxHeight: '200px',
-                    overflowY: 'auto',
-                    background: colors.surface,
-                    border: `1px solid ${colors.borderSubtle}`,
-                    borderRadius: '8px',
-                    marginBottom: '4px',
-                    boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
-                    zIndex: 100,
-                  }}>
-                    {fileSearchResults.map((file, idx) => (
-                      <div
-                        key={file.path}
-                        onClick={() => selectFileReference(file)}
-                        style={{
-                          padding: '8px 12px',
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '8px',
-                          background: idx === fileSearchIndex ? colors.elevated : 'transparent',
-                          borderBottom: idx < fileSearchResults.length - 1 ? `1px solid ${colors.borderSubtle}` : 'none',
-                        }}
-                        onMouseEnter={() => setFileSearchIndex(idx)}
-                      >
-                        <span style={{ fontSize: '14px' }}>{file.isImage ? '🖼' : '📄'}</span>
-                        <div style={{ flex: 1, overflow: 'hidden' }}>
-                          <div style={{ 
-                            fontSize: '12px', 
-                            color: colors.textPrimary,
-                            whiteSpace: 'nowrap',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                          }}>
-                            {file.name}
-                          </div>
-                          <div style={{ 
-                            fontSize: '10px', 
-                            color: colors.textTertiary,
-                            whiteSpace: 'nowrap',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                          }}>
-                            {file.path}
-                          </div>
+                  paddingRight: '4px',
+                }}
+              >
+                {/* Revision History */}
+                {revisionHistory.length > 0 && (
+                  <div style={{ marginBottom: '16px' }}>
+                    {revisionHistory.map((step, i) => (
+                      <div key={step.sessionId} style={{
+                        padding: '8px 12px',
+                        background: 'rgba(255,255,255,0.03)',
+                        borderRadius: '8px',
+                        marginBottom: '8px',
+                        border: '1px solid rgba(255,255,255,0.05)',
+                      }}>
+                        <div style={{ fontSize: '11px', color: colors.textSecondary, marginBottom: '4px' }}>
+                          <span style={{ color: colors.accent, marginRight: '6px' }}>#{i + 1}</span>
+                          {step.instruction}
                         </div>
-                        {file.isImage && <span style={{ fontSize: '10px', color: '#06B6D4' }}>IMAGE</span>}
+                        <div style={{ fontSize: '10px', color: colors.success, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <Zap size={10} /> {step.summary}
+                        </div>
                       </div>
                     ))}
                   </div>
                 )}
+
+                {/* Live Events */}
+                {events.map((event, i) => (
+                  <StreamStep key={event.id} event={event} isLast={i === events.length - 1} />
+                ))}
               </div>
-              
-              {/* Upload button + hint */}
-              <div style={{ 
-                display: 'flex', 
-                justifyContent: 'space-between', 
-                alignItems: 'center',
-                marginTop: '8px',
-              }}>
-                <label style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '4px',
-                  padding: '4px 8px',
-                  background: colors.elevated,
-                  borderRadius: '6px',
-                  fontSize: '11px',
-                  color: colors.textTertiary,
-                  cursor: 'pointer',
-                  border: `1px solid ${colors.borderSubtle}`,
-                  transition: 'all 0.15s ease',
-                }}>
-                  <span>📎</span>
-                  <span>Attach</span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    style={{ display: 'none' }}
-                    onChange={(e) => {
-                      const files = Array.from(e.target.files || []);
-                      files.forEach(file => handleImageUpload(file));
-                      e.target.value = ''; // Reset
+            )}
+
+            {/* Input Slot (Recessed) */}
+            {!isComplete && (
+              <div style={{
+                background: 'rgba(255,255,255,0.02)', // Lighter, more subtle (was rgba(0,0,0,0.3))
+                border: '1px solid rgba(255,255,255,0.08)',
+                borderRadius: '12px',
+                padding: '12px', // Slightly tighter padding
+                boxShadow: 'inset 0 2px 6px rgba(0,0,0,0.2)', // Softer inset shadow
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '10px',
+                transition: 'border-color 0.2s ease',
+              }}
+                onFocus={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)'}
+                onBlur={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'}
+              >
+                {/* File References */}
+                {fileReferences.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                    {fileReferences.map((file) => (
+                      <div key={file.path} style={{
+                        display: 'flex', alignItems: 'center', gap: '6px',
+                        padding: '4px 8px',
+                        background: 'rgba(255,255,255,0.05)',
+                        borderRadius: '6px',
+                        fontSize: '11px',
+                        color: colors.textSecondary,
+                        border: '1px solid rgba(255,255,255,0.05)',
+                      }}>
+                        {file.isImage ? <ImageIcon size={12} /> : <FileText size={12} />}
+                        <span style={{ maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {file.name}
+                        </span>
+                        <button onClick={() => removeFileReference(file.path)} style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0 }}>
+                          <X size={10} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Textarea */}
+                <div style={{ position: 'relative' }}>
+                  <textarea
+                    ref={instructionInputRef}
+                    autoFocus
+                    rows={events.length > 0 ? 2 : 3}
+                    disabled={isProcessing}
+                    value={instruction}
+                    onChange={!isProcessing ? handleInstructionChange : undefined}
+                    onKeyDown={!isProcessing ? handleInstructionKeyDown : undefined}
+                    placeholder={isProcessing ? "Processing..." : mode === 'add' ? "Describe what to add... (Use @ to reference files)" : "Describe your change... (Use @ to reference files, ⌘C to add more)"}
+                    style={{
+                      width: '100%',
+                      background: 'transparent',
+                      border: 'none',
+                      outline: 'none',
+                      color: colors.textPrimary,
+                      fontSize: '15px',
+                      fontFamily: 'system-ui, sans-serif',
+                      lineHeight: 1.5,
+                      resize: 'none',
+                      opacity: isProcessing ? 0.5 : 1,
+                      minHeight: '80px', // Taller input area (was 60px)
                     }}
                   />
-                </label>
-                <span style={{ fontSize: '10px', color: colors.textTertiary }}>
-                  @ for files • drop images
-                </span>
-              </div>
-            </div>
-          )}
 
-          {/* Revision Summary + Actions */}
-          {isComplete && (
-            <div style={{ 
-              padding: '16px',
-              flexShrink: 0,
-            }}>
-              {/* Files Changed Summary */}
-              {canRevert && filesChanged.length > 0 && (
-                <div style={{
-                  marginBottom: '12px',
-                  padding: '10px 12px',
-                  background: colors.elevated,
-                  borderRadius: '8px',
-                  border: `1px solid ${colors.borderSubtle}`,
-                }}>
-                  <div style={{ 
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    marginBottom: '8px'
-                  }}>
-                    <div style={{ 
-                      fontSize: '10px', 
-                      color: colors.textTertiary, 
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.5px',
+                  {/* @ Autocomplete */}
+                  {showFileSearch && fileSearchResults.length > 0 && (
+                    <div style={{
+                      position: 'absolute',
+                      bottom: '100%',
+                      left: 0,
+                      right: 0,
+                      maxHeight: '200px',
+                      overflowY: 'auto',
+                      background: '#1C1C1C',
+                      border: '1px solid rgba(255,255,255,0.1)',
+                      borderRadius: '8px',
+                      marginBottom: '8px',
+                      boxShadow: '0 10px 40px rgba(0,0,0,0.5)',
+                      zIndex: 100,
                     }}>
-                      Files Modified
+                      {fileSearchResults.map((file, idx) => (
+                        <div
+                          key={file.path}
+                          onClick={() => selectFileReference(file)}
+                          style={{
+                            padding: '8px 12px',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            background: idx === fileSearchIndex ? 'rgba(255,255,255,0.05)' : 'transparent',
+                          }}
+                        >
+                          {file.isImage ? <ImageIcon size={14} /> : <FileText size={14} />}
+                          <div style={{ flex: 1, overflow: 'hidden' }}>
+                            <div style={{ fontSize: '13px', color: colors.textPrimary }}>{file.name}</div>
+                            <div style={{ fontSize: '11px', color: colors.textTertiary }}>{file.path}</div>
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                    <button
-                      onClick={handleViewDiff}
-                      disabled={diffLoading}
-                      style={{
-                        background: 'transparent',
-                        border: 'none',
-                        padding: '2px 6px',
-                        color: colors.accent,
-                        fontSize: '10px',
-                        fontWeight: 500,
-                        cursor: diffLoading ? 'wait' : 'pointer',
-                        opacity: diffLoading ? 0.5 : 1,
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '4px',
-                      }}
+                  )}
+                </div>
+
+                {/* Action Bar */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' }}>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    {/* Attach Button (Icon Only - Subtle) */}
+                    <label style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      width: '32px', height: '32px', // Fixed square size
+                      background: 'rgba(255,255,255,0.03)',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      borderRadius: '8px',
+                      color: colors.textSecondary, // Subtle color
+                      cursor: 'pointer',
+                      transition: 'all 0.2s ease',
+                    }}
+                      onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.08)'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.03)'}
                     >
-                      <span>◐</span> {diffLoading ? 'Loading...' : 'View Diff'}
-                    </button>
+                      <Paperclip size={16} style={{ opacity: 0.7 }} />
+                      <input
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        style={{ display: 'none' }}
+                        onChange={(e) => {
+                          const files = Array.from(e.target.files || []);
+                          files.forEach(file => handleImageUpload(file));
+                          e.target.value = '';
+                        }}
+                      />
+                    </label>
+
+                    {/* Model Selector (No Label, Consistent Height) */}
+                    <div style={{ height: '32px' }}>
+                      <Dropdown
+                        label=""
+                        value={model}
+                        options={MODELS}
+                        onChange={setModel}
+                        disabled={isProcessing}
+                      />
+                    </div>
                   </div>
-                  {filesChanged.map((file, i) => (
-                    <div key={i} style={{
+
+                  {/* The Gem Button */}
+                  <button
+                    onClick={sendCommand}
+                    disabled={!instruction.trim() || isProcessing}
+                    style={{
+                      background: instruction.trim()
+                        ? `linear-gradient(135deg, ${colors.brand} 0%, #A855F7 100%)`
+                        : 'rgba(255,255,255,0.05)',
+                      border: 'none',
+                      borderRadius: '8px', // Match other buttons
+                      width: '32px', // Match height
+                      height: '32px',
                       display: 'flex',
                       alignItems: 'center',
-                      gap: '8px',
-                      fontSize: '11px',
-                      fontFamily: 'ui-monospace, monospace',
-                      color: colors.textSecondary,
-                      padding: '4px 0',
-                    }}>
-                      <span style={{ color: colors.success }}>
-                        {file.isNew ? '+' : '~'}
-                      </span>
-                      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {file.path}
-                      </span>
-                      <span style={{ color: colors.textTertiary, fontSize: '10px' }}>
-                        {file.lines} lines
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              
-              {/* Action Buttons */}
-              <div style={{ 
-                display: 'flex',
-                gap: '8px',
-                justifyContent: 'center',
-                flexWrap: 'wrap',
-              }}>
-                {canRevert ? (
-                  <>
-                    {/* Undo All - only shown when there are multiple revisions (2+) */}
-                    {revisionHistory.length > 1 && (
-                      <button
-                        onClick={handleUndoAll}
-                        style={{
-                          background: 'transparent',
-                          border: `1px solid ${colors.error}40`,
-                          borderRadius: '8px',
-                          padding: '10px 14px',
-                          color: colors.error,
-                          fontSize: '11px',
-                          fontWeight: 600,
-                          cursor: 'pointer',
-                          transition: 'all 0.15s ease',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '5px',
-                        }}
-                      >
-                        <span>⟲</span> Undo All
-                      </button>
-                    )}
-                    <button
-                      onClick={handleRevert}
-                      style={{
-                        background: 'transparent',
-                        border: `1px solid ${colors.textTertiary}`,
-                        borderRadius: '8px',
-                        padding: '10px 14px',
-                        color: colors.textSecondary,
-                        fontSize: '11px',
-                        fontWeight: 600,
-                        cursor: 'pointer',
-                        transition: 'all 0.15s ease',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '5px',
-                      }}
-                    >
-                      <span>↩</span> Undo
-                    </button>
-                    <button
-                      onClick={handleRevise}
-                      style={{
-                        background: 'transparent',
-                        border: `1px solid ${colors.accent}`,
-                        borderRadius: '8px',
-                        padding: '10px 14px',
-                        color: colors.accent,
-                        fontSize: '11px',
-                        fontWeight: 600,
-                        cursor: 'pointer',
-                        transition: 'all 0.15s ease',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '5px',
-                      }}
-                    >
-                      <span>✎</span> Revise
-                    </button>
-                    <button
-                      onClick={handleKeep}
-                      style={{
-                        background: colors.success,
-                        border: 'none',
-                        borderRadius: '8px',
-                        padding: '10px 14px',
-                        color: colors.void,
-                        fontSize: '11px',
-                        fontWeight: 600,
-                        cursor: 'pointer',
-                        boxShadow: `0 0 20px ${colors.successSoft}`,
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '5px',
-                      }}
-                    >
-                      <span>✓</span> Accept
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    onClick={closeChat}
-                    style={{
-                      background: status === 'error' ? colors.error : colors.textTertiary,
-                      border: 'none',
-                      borderRadius: '8px',
-                      padding: '10px 24px',
-                      color: colors.void,
-                      fontSize: '12px',
-                      fontWeight: 600,
-                      cursor: 'pointer',
+                      justifyContent: 'center',
+                      cursor: instruction.trim() ? 'pointer' : 'not-allowed',
+                      color: instruction.trim() ? '#FFF' : 'rgba(255,255,255,0.2)',
+                      boxShadow: instruction.trim() ? `0 0 20px ${colors.brandGlow}` : 'none',
+                      transition: 'all 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
+                      transform: instruction.trim() ? 'scale(1)' : 'scale(0.95)',
                     }}
+                    onMouseEnter={e => instruction.trim() && (e.currentTarget.style.transform = 'scale(1.05)')}
+                    onMouseLeave={e => instruction.trim() && (e.currentTarget.style.transform = 'scale(1)')}
                   >
-                    {status === 'error' ? 'Close' : 'Done'}
+                    {isProcessing ? (
+                      <div style={{
+                        width: '14px', height: '14px', borderRadius: '50%',
+                        border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#FFF',
+                        animation: 'spin 1s linear infinite',
+                      }} />
+                    ) : (
+                      <ArrowUp size={18} strokeWidth={2.5} />
+                    )}
                   </button>
-                )}
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {/* Footer Controls */}
-          {!isComplete && (
-            <div style={{
-              padding: '12px 16px',
-              borderTop: `1px solid ${colors.borderSubtle}`,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: '8px',
-              flexShrink: 0,
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                <Dropdown label="Model" value={model} options={MODELS} onChange={setModel} disabled={isProcessing} />
-                <Toggle label="Memory" value={memoryMode} onChange={v => { setMemoryMode(v); if (!v) setChatId(null); }} disabled={isProcessing} />
-                <Dropdown label="Prompt" value={promptTemplate} options={Object.values(PROMPT_TEMPLATES)} onChange={setPromptTemplate} disabled={isProcessing} />
+            {/* Completed State Actions */}
+            {isComplete && (
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '10px' }}>
                 <button
-                  onClick={openPromptEditor}
-                  disabled={isProcessing}
+                  onClick={handleRevert}
                   style={{
-                    background: 'transparent',
-                    border: `1px solid ${colors.borderDefault}`,
-                    borderRadius: '6px',
-                    padding: '6px 8px',
-                    color: colors.textTertiary,
-                    fontSize: '10px',
-                    cursor: isProcessing ? 'not-allowed' : 'pointer',
-                    opacity: isProcessing ? 0.5 : 1,
-                  }}
-                >
-                  Edit
-                </button>
-              </div>
-              
-              {isProcessing ? (
-                <button
-                  onClick={handleCancel}
-                  style={{
-                    background: 'rgba(239,68,68,0.2)',
-                    color: '#EF4444',
-                    border: '1px solid rgba(239,68,68,0.3)',
+                    background: 'rgba(255,255,255,0.05)',
+                    border: '1px solid rgba(255,255,255,0.1)',
                     borderRadius: '8px',
                     padding: '8px 16px',
+                    color: colors.textSecondary,
                     fontSize: '12px',
-                    fontWeight: 600,
+                    fontWeight: 500,
                     cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
                   }}
                 >
-                  <span style={{ fontSize: '10px' }}>⏹</span> Cancel
+                  Undo
                 </button>
-              ) : (
                 <button
-                  onClick={sendCommand}
-                  disabled={!instruction.trim()}
+                  onClick={handleKeep}
                   style={{
-                    background: instruction.trim() ? colors.textPrimary : colors.overlay,
-                    color: instruction.trim() ? colors.void : colors.textMuted,
+                    background: colors.success,
                     border: 'none',
                     borderRadius: '8px',
                     padding: '8px 16px',
+                    color: '#000',
                     fontSize: '12px',
                     fontWeight: 600,
-                    cursor: instruction.trim() ? 'pointer' : 'not-allowed',
-                    boxShadow: instruction.trim() ? '0 0 20px rgba(255,255,255,0.1)' : 'none',
+                    cursor: 'pointer',
+                    boxShadow: `0 0 15px ${colors.successSoft}`,
                   }}
                 >
-                  Send
+                  Accept
                 </button>
-              )}
-            </div>
-          )}
-        </div>
+              </div>
+            )}
+          </div>
+        </TitaniumShell>
       )}
 
       {/* Prompt Editor Modal */}
@@ -1586,7 +1173,7 @@ export const CursorOverlay = () => {
           background: 'rgba(0,0,0,0.8)',
           backdropFilter: 'blur(4px)',
         }} onClick={() => setShowPromptEditor(false)}>
-          <div 
+          <div
             onClick={e => e.stopPropagation()}
             style={{
               width: '600px',
@@ -1657,7 +1244,7 @@ export const CursorOverlay = () => {
           background: 'rgba(0,0,0,0.9)',
           backdropFilter: 'blur(8px)',
         }} onClick={closeDiffPanel}>
-          <div 
+          <div
             onClick={e => e.stopPropagation()}
             style={{
               width: '90vw',
@@ -1706,13 +1293,13 @@ export const CursorOverlay = () => {
                   ))}
                 </div>
               </div>
-              <button 
-                onClick={closeDiffPanel} 
-                style={{ 
-                  background: 'transparent', 
-                  border: 'none', 
-                  color: colors.textTertiary, 
-                  fontSize: '20px', 
+              <button
+                onClick={closeDiffPanel}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: colors.textTertiary,
+                  fontSize: '20px',
                   cursor: 'pointer',
                   padding: '4px 8px',
                 }}
@@ -1722,8 +1309,8 @@ export const CursorOverlay = () => {
             </div>
 
             {/* Diff Content - Unified View */}
-            <div style={{ 
-              flex: 1, 
+            <div style={{
+              flex: 1,
               overflow: 'auto',
               fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace',
               fontSize: '12px',
@@ -1732,36 +1319,36 @@ export const CursorOverlay = () => {
               {(() => {
                 const changes = diffData[activeDiffFile]?.changes || [];
                 let lineNum = 1;
-                
+
                 return changes.map((change, changeIdx) => {
                   const lines = change.value.split('\n');
                   // Remove last empty line from split if value ends with \n
                   if (lines[lines.length - 1] === '') lines.pop();
-                  
+
                   return lines.map((line, lineIdx) => {
                     const currentLineNum = change.removed ? null : lineNum++;
                     if (change.added) lineNum--; // Don't increment for first render of added
                     if (!change.removed && !change.added) {
                       // unchanged line
                     }
-                    
+
                     const isAdded = change.added;
                     const isRemoved = change.removed;
-                    
+
                     return (
-                      <div 
+                      <div
                         key={`${changeIdx}-${lineIdx}`}
                         style={{
                           display: 'flex',
-                          background: isRemoved 
-                            ? 'rgba(248, 81, 73, 0.15)' 
-                            : isAdded 
-                              ? 'rgba(63, 185, 80, 0.15)' 
+                          background: isRemoved
+                            ? 'rgba(248, 81, 73, 0.15)'
+                            : isAdded
+                              ? 'rgba(63, 185, 80, 0.15)'
                               : 'transparent',
-                          borderLeft: isRemoved 
-                            ? '3px solid #f85149' 
-                            : isAdded 
-                              ? '3px solid #3fb950' 
+                          borderLeft: isRemoved
+                            ? '3px solid #f85149'
+                            : isAdded
+                              ? '3px solid #3fb950'
                               : '3px solid transparent',
                         }}
                       >
@@ -1777,17 +1364,17 @@ export const CursorOverlay = () => {
                         }}>
                           {isRemoved ? '−' : isAdded ? '+' : ' '}
                         </span>
-                        
+
                         {/* Line number gutter */}
                         <span style={{
                           width: '50px',
                           padding: '0 8px',
                           textAlign: 'right',
                           color: colors.textTertiary,
-                          background: isRemoved 
-                            ? 'rgba(248, 81, 73, 0.1)' 
-                            : isAdded 
-                              ? 'rgba(63, 185, 80, 0.1)' 
+                          background: isRemoved
+                            ? 'rgba(248, 81, 73, 0.1)'
+                            : isAdded
+                              ? 'rgba(63, 185, 80, 0.1)'
                               : colors.surface,
                           borderRight: `1px solid ${colors.borderSubtle}`,
                           flexShrink: 0,
@@ -1796,16 +1383,16 @@ export const CursorOverlay = () => {
                         }}>
                           {!isRemoved ? (lineNum - (isAdded ? 0 : 1)) : ''}
                         </span>
-                        
+
                         {/* Code content */}
                         <pre style={{
                           margin: 0,
                           padding: '0 16px',
                           flex: 1,
-                          color: isRemoved 
-                            ? '#f85149' 
-                            : isAdded 
-                              ? '#3fb950' 
+                          color: isRemoved
+                            ? '#f85149'
+                            : isAdded
+                              ? '#3fb950'
                               : colors.textSecondary,
                           whiteSpace: 'pre',
                           overflow: 'visible',
