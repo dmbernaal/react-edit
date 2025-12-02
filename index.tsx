@@ -12,50 +12,7 @@ import type {
   FileSearchResult 
 } from './src/client/types';
 import { DEBUG, log, API_BASE, MODELS, PROMPT_TEMPLATES, colors } from './src/client/constants';
-
-// ============================================================================
-// UTILITIES
-// ============================================================================
-
-const cleanFilePath = (rawPath: string | null): string | null => {
-  if (!rawPath) return null;
-  let cleaned = rawPath.split('?')[0];
-  const prefixes = [
-    'about://React/Server/',
-    'webpack-internal://',
-    '///rsc/./',
-    '//rsc/./',
-    '/rsc/./',
-    'rsc/./',
-    '///app-pages-browser/./',  // Next.js App Router prefix
-    '//app-pages-browser/./',
-    '/app-pages-browser/./',
-    'app-pages-browser/./',
-  ];
-  for (const prefix of prefixes) {
-    if (cleaned.includes(prefix)) cleaned = cleaned.split(prefix).pop() || cleaned;
-  }
-  return cleaned.replace(/^\/+/, '');
-};
-
-const inferFileFromRoute = (): string => {
-  const pathname = window.location.pathname;
-  if (pathname === '/') return 'app/page.tsx';
-  return `app/${pathname.slice(1)}/page.tsx`;
-};
-
-const getStoredValue = <T,>(key: string, defaultValue: T): T => {
-  if (typeof window === 'undefined') return defaultValue;
-  try {
-    const stored = localStorage.getItem(key);
-    return stored ? JSON.parse(stored) : defaultValue;
-  } catch { return defaultValue; }
-};
-
-const setStoredValue = (key: string, value: any) => {
-  if (typeof window === 'undefined') return;
-  try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
-};
+import { cleanFilePath, inferFileFromRoute, getStoredValue, setStoredValue } from './src/client/utils';
 
 // ============================================================================
 // SUB-COMPONENTS
