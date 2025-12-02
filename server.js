@@ -22,6 +22,14 @@ const revertStore = new Map();
 // PROMPT TEMPLATES
 // ============================================================================
 
+// Critical: This rule is appended to all prompts to prevent the tool from removing itself
+const SAFETY_RULE = `
+
+CRITICAL: NEVER remove or modify these components/imports - they enable this editing tool:
+- CursorOverlay, ClientOverlay, or any *Overlay component
+- Any import from 'cursor-agent-browser-cli'
+If you see these in the code, leave them exactly as they are.`;
+
 const PROMPT_TEMPLATES = {
   designer: `You are an elite UI/UX designer. Edit the file "\${filePath}".
 
@@ -45,7 +53,7 @@ INSTRUCTIONS:
 1. Search the file for the distinctive CSS classes above - they uniquely identify this element
 2. The className string in the JSX will match these classes
 3. Make the requested changes to that specific element
-4. Don't ask questions, just make the edit`,
+4. Don't ask questions, just make the edit` + SAFETY_RULE,
 
   minimal: `Edit "\${filePath}" with minimal changes.
 
@@ -61,7 +69,7 @@ Element HTML:
 
 TASK: \${instruction}
 
-Search for the className in the code and make ONLY the requested change.`,
+Search for the className in the code and make ONLY the requested change.` + SAFETY_RULE,
 
   engineer: `Edit "\${filePath}".
 
@@ -75,7 +83,7 @@ Component context: \${parentContext}
 
 TASK: \${instruction}
 
-Find the element by its distinctive className and make clean, idiomatic changes.`,
+Find the element by its distinctive className and make clean, idiomatic changes.` + SAFETY_RULE,
 
   accessibility: `Edit "\${filePath}" for accessibility.
 
@@ -88,7 +96,7 @@ Classes: \${elementClasses}
 
 TASK: \${instruction}
 
-Find by className, then ensure: keyboard nav, screen readers, color contrast, focus states.`
+Find by className, then ensure: keyboard nav, screen readers, color contrast, focus states.` + SAFETY_RULE
 };
 
 // ADD MODE TEMPLATES - For adding new elements
@@ -117,7 +125,7 @@ INSTRUCTIONS:
 3. Create a new element that matches the existing code style
 4. Use appropriate Tailwind CSS classes matching the existing design
 5. Don't modify the existing element - only ADD new code before it
-6. Don't ask questions, just add the new element`,
+6. Don't ask questions, just add the new element` + SAFETY_RULE,
 
   after: `You are an elite UI/UX designer. Edit the file "\${filePath}".
 
@@ -143,7 +151,7 @@ INSTRUCTIONS:
 3. Create a new element that matches the existing code style
 4. Use appropriate Tailwind CSS classes matching the existing design
 5. Don't modify the existing element - only ADD new code after it
-6. Don't ask questions, just add the new element`,
+6. Don't ask questions, just add the new element` + SAFETY_RULE,
 
   'inside-start': `You are an elite UI/UX designer. Edit the file "\${filePath}".
 
@@ -169,7 +177,7 @@ INSTRUCTIONS:
 3. Create a new element that matches the existing code style
 4. Use appropriate Tailwind CSS classes matching the existing design
 5. Don't modify the existing content - only ADD new code at the beginning
-6. Don't ask questions, just add the new element`,
+6. Don't ask questions, just add the new element` + SAFETY_RULE,
 
   'inside-end': `You are an elite UI/UX designer. Edit the file "\${filePath}".
 
@@ -195,7 +203,7 @@ INSTRUCTIONS:
 3. Create a new element that matches the existing code style
 4. Use appropriate Tailwind CSS classes matching the existing design
 5. Don't modify the existing content - only ADD new code at the end
-6. Don't ask questions, just add the new element`
+6. Don't ask questions, just add the new element` + SAFETY_RULE
 };
 
 // ============================================================================
@@ -308,51 +316,31 @@ const runCursorAgentStream = (prompt, cwd, options, onEvent, onComplete, onError
       try {
         const event = JSON.parse(line);
         
-        // Track file writes/edits for revert capability
         if (event.type === 'tool_call' && event.subtype === 'started') {
-          log('[debug] tool_call started:', JSON.stringify(event.tool_call).substring(0, 200));
-          
-          // Check for writeToolCall OR editToolCall (cursor-agent uses both)
           const toolCall = event.tool_call?.writeToolCall || event.tool_call?.editToolCall;
           if (toolCall?.args?.path) {
             const writePath = toolCall.args.path;
             const fullPath = path.isAbsolute(writePath) ? writePath : path.join(cwd, writePath);
             
-            // Only track if not already tracked
             if (!fileWrites.some(fw => fw.relativePath === writePath)) {
-              log('[debug] Tracking write to:', writePath);
-              
-              // Store original content before write
               if (fs.existsSync(fullPath)) {
-                const originalContent = fs.readFileSync(fullPath, 'utf-8');
-                fileWrites.push({ path: fullPath, original: originalContent, relativePath: writePath });
-                log('[debug] Stored original content for:', writePath);
+                fileWrites.push({ path: fullPath, original: fs.readFileSync(fullPath, 'utf-8'), relativePath: writePath });
               } else {
-                // New file being created
                 fileWrites.push({ path: fullPath, original: null, relativePath: writePath, isNew: true });
-                log('[debug] New file will be created:', writePath);
               }
             }
           }
         }
         
-        // Track file write/edit completion details
         if (event.type === 'tool_call' && event.subtype === 'completed') {
-          log('[debug] tool_call completed:', JSON.stringify(event.tool_call).substring(0, 200));
-          
-          // Check for writeToolCall OR editToolCall
-          const writeResult = event.tool_call?.writeToolCall?.result?.success;
-          const editResult = event.tool_call?.editToolCall?.result?.success;
-          const result = writeResult || editResult;
+          const result = event.tool_call?.writeToolCall?.result?.success || event.tool_call?.editToolCall?.result?.success;
           const toolCall = event.tool_call?.writeToolCall || event.tool_call?.editToolCall;
           
           if (result && toolCall?.args?.path) {
-            const writePath = toolCall.args.path;
-            fileWriteDetails[writePath] = {
+            fileWriteDetails[toolCall.args.path] = {
               lines: result.linesAdded || result.linesCreated || 0,
               size: result.fileSize || 0
             };
-            log('[debug] Write completed:', writePath, fileWriteDetails[writePath]);
           }
         }
         
@@ -430,12 +418,8 @@ app.post('/cursor-command-stream', async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
   
-  console.log('[sse] Headers flushed, connection established');
-
   const sendEvent = (type, data) => {
-    const payload = `data: ${JSON.stringify({ type, ...data })}\n\n`;
-    const written = res.write(payload);
-    log(`[sse] Sent ${type} event (buffered: ${!written})`);
+    res.write(`data: ${JSON.stringify({ type, ...data })}\n\n`);
   };
 
   console.log('\n' + '─'.repeat(60));
@@ -596,10 +580,7 @@ app.post('/cursor-command-stream', async (req, res) => {
     }
   };
 
-  // Run cursor-agent with streaming
-  // Use revisionSessionId for --resume if provided (revision mode), otherwise use chatId if memoryMode is on
   const resumeId = revisionSessionId || (memoryMode ? chatId : null);
-  log('[debug] resumeId:', resumeId, 'revisionSessionId:', revisionSessionId, 'memoryMode:', memoryMode);
   
   runCursorAgentStream(
     prompt,
@@ -675,11 +656,7 @@ app.post('/cursor-command-stream', async (req, res) => {
         });
       }
     },
-    // On complete
     (success, fileWrites, fileWriteDetails, stderrOutput) => {
-      log('[debug] Complete - fileWrites:', fileWrites.length, 'success:', success);
-      
-      // Update revert store with any additional file writes
       const stored = revertStore.get(sessionId);
       if (stored && fileWrites.length > 0) {
         stored.files = [...stored.files, ...fileWrites.filter(fw => 
@@ -687,12 +664,10 @@ app.post('/cursor-command-stream', async (req, res) => {
         )];
       }
       
-      // Check for errors in stderr
-      if (stderrOutput && stderrOutput.includes('Cannot use this model')) {
+      if (stderrOutput?.includes('Cannot use this model')) {
         sendEvent('error', { message: stderrOutput });
       }
       
-      // Build detailed files changed array
       const filesChangedList = fileWrites.map(fw => ({
         path: fw.relativePath,
         isNew: fw.isNew || false,
@@ -700,12 +675,8 @@ app.post('/cursor-command-stream', async (req, res) => {
         size: fileWriteDetails[fw.relativePath]?.size || 0
       }));
       
-      log('[debug] filesChangedList:', filesChangedList.length, 'files');
-      
-      // Determine if changes were actually made
       const hasChanges = fileWrites.length > 0;
       const canRevert = hasChanges && success;
-      log('[debug] hasChanges:', hasChanges, 'canRevert:', canRevert);
       
       sendEvent('complete', { 
         success: success && !stderrOutput?.includes('Cannot use this model'),
@@ -779,8 +750,6 @@ app.post('/revert', async (req, res) => {
 
 app.post('/diff', async (req, res) => {
   const { sessionId } = req.body;
-  
-  log(`[diff] Request for session: ${sessionId}`);
   
   const stored = revertStore.get(sessionId);
   if (!stored) {
@@ -1031,17 +1000,9 @@ app.post('/api/upload-image', (req, res) => {
     const buffer = Buffer.from(data, 'base64');
     fs.writeFileSync(filePath, buffer);
     
-    // Use absolute path since it's in system temp (cursor-agent can read absolute paths)
-    console.log(`[upload] Saved image: ${filePath} (${buffer.length} bytes)`);
-    
-    res.json({ 
-      success: true, 
-      path: filePath, // Absolute path to system temp
-      name: uniqueName,
-      size: buffer.length
-    });
+    console.log(`[upload] ${filePath} (${buffer.length} bytes)`);
+    res.json({ success: true, path: filePath, name: uniqueName, size: buffer.length });
   } catch (error) {
-    console.error('[upload] Error:', error.message);
     res.status(500).json({ error: error.message });
   }
 });

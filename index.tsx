@@ -519,14 +519,8 @@ export const CursorOverlay = () => {
     // Find the first div child which should be the rendererRoot
     const rendererRoot = host.shadowRoot.querySelector('div');
     if (rendererRoot) {
-      // Mode-specific hue rotations:
-      // Default react-grab color is magenta/pink (#D239C0, hue ≈ 310°)
-      // - Edit mode (mint #34D399, hue ≈ 156°): shift by -154° or +206°
-      // - Add mode (cyan #06B6D4, hue ≈ 187°): shift by -123° or +237°
-      const currentMode = modeRef.current;
-      const hueShift = currentMode === 'add' ? '237deg' : '165deg';
+      const hueShift = modeRef.current === 'add' ? '237deg' : '165deg';
       rendererRoot.style.filter = `hue-rotate(${hueShift})`;
-      console.log(`🎨 react-grab color: ${currentMode === 'add' ? 'CYAN (add)' : 'MINT (edit)'}`);
       return true;
     }
     return false;
@@ -635,17 +629,12 @@ export const CursorOverlay = () => {
     setInstruction(prev => prev.replace(new RegExp(`@${path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s?`, 'g'), ''));
   };
 
-  // Initialize react-grab
   useEffect(() => {
     setMounted(true);
-    console.log("🔧 Initializing react-grab...");
     const api = init({
       theme: { enabled: true, hue: 0, elementLabel: { backgroundColor: colors.surface, textColor: colors.textPrimary }},
       onElementSelect: async (element: Element) => {
-        console.log("🔍 onElementSelect triggered!");
-        console.log("   Element:", element.tagName, element.className?.substring(0, 50));
-        console.log("   Current mode (from ref):", modeRef.current);
-        log("🔍 Selected element:", element);
+        log("Selected element:", element.tagName, element.className?.substring(0, 50));
         
         const stack = await getStack(element);
         const rawFileName = getFileName(stack);
@@ -670,30 +659,16 @@ export const CursorOverlay = () => {
           .filter((name, i, arr) => name && arr.indexOf(name) === i)
           .join(' → ');
         
-        log("📚 Stack:", stack);
-        log("📂 Raw file:", rawFileName);
-        log("📂 Cleaned file:", fileName, "Line:", lineNumber);
-        log("🏷️ Component:", componentName);
-        log("🎨 Classes:", elementClasses.substring(0, 80) + (elementClasses.length > 80 ? '...' : ''));
-        log("🌳 Context:", parentContext);
-        
         if (!fileName) {
-          log("🖥️ No source info - using route fallback");
           fileName = inferFileFromRoute();
           lineNumber = 0;
         }
         
         const newTarget: Target = { fileName, lineNumber, componentName, elementText, elementTag, elementClasses, elementHTML, parentContext };
-        
-        // Use ref to get current targets (avoids stale closure in callback)
         const currentTargets = targetsRef.current;
         const currentMode = modeRef.current;
         
-        log("📊 Current targets:", currentTargets.length, "Mode:", currentMode, "New element:", elementTag, fileName, lineNumber);
-        
-        // ADD MODE: Single element selection, default to "after" (skip position picker for faster UX)
         if (currentMode === 'add') {
-          console.log("🆕 Add Mode - selecting container for insertion");
           setTargets([newTarget]);
           setAddPosition('after'); // Default to "after" - user can change if needed
           setShowPositionPicker(false); // Skip position picker for faster flow
@@ -706,10 +681,7 @@ export const CursorOverlay = () => {
           return;
         }
         
-        // EDIT MODE: Multi-select support
-        // If we already have targets, ADD to selection (multi-select)
         if (currentTargets.length > 0 && currentTargets.length < 5) {
-          // Check for duplicates - use multiple criteria since line numbers can be the same for different elements
           const isDuplicate = currentTargets.some(t => 
             t.fileName === fileName && 
             t.lineNumber === lineNumber && 
@@ -718,19 +690,14 @@ export const CursorOverlay = () => {
           );
           if (!isDuplicate) {
             setTargets(prev => [...prev, newTarget]);
-            log("➕ Added element to selection:", currentTargets.length + 1);
-          } else {
-            log("⚠️ Element already selected (exact match), skipping");
           }
         } else if (currentTargets.length >= 5) {
-          log("⚠️ Max 5 elements reached");
+          // Max elements reached
         } else {
-          // No existing targets - start fresh selection
           setTargets([newTarget]);
           setEvents([]);
           setCanRevert(false);
           setSessionId(null);
-          log("🎯 New selection started");
         }
         
         setActive(true);
@@ -738,11 +705,8 @@ export const CursorOverlay = () => {
         api.deactivate();
       }
     });
-    console.log("🔧 react-grab initialized, api:", api);
-    console.log("   api.activate:", typeof api?.activate);
-    console.log("   api.deactivate:", typeof api?.deactivate);
     setGrabApi(api);
-    return () => { if (api) api.deactivate(); };
+    return () => api?.deactivate();
   }, []);
 
   // Toggle inspector mode (activate/deactivate react-grab)
@@ -802,48 +766,29 @@ export const CursorOverlay = () => {
         }
       }
       
-      // CMD+C for Edit Mode - ensure mode is set to 'edit'
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'c') {
-        // Don't preventDefault - let react-grab handle it
-        // Just set our mode to 'edit'
         if (modeRef.current !== 'edit') {
-          console.log("✎ Edit Mode activated (CMD+C)");
           setMode('edit');
           setShowPositionPicker(false);
         }
         setInspectorActive(true);
       }
       
-      // CMD+E for Add Mode
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'e') {
         e.preventDefault();
         e.stopPropagation();
-        
-        console.log("🆕 Add Mode activated (CMD+E)");
-        
         setMode('add');
         setShowPositionPicker(false);
-        // Clear previous targets for fresh add
         setTargets([]);
         setEvents([]);
         setCanRevert(false);
         setSessionId(null);
         setActive(false);
         
-        // Simulate CMD+C keypress to trigger react-grab's visual UI
-        // react-grab only responds to CMD+C (KeyC), so we need to fake it
-        const fakeKeyDownEvent = new KeyboardEvent('keydown', {
-          key: 'c',
-          code: 'KeyC',
-          metaKey: true,
-          ctrlKey: e.ctrlKey,
-          bubbles: true,
-          cancelable: true,
-        });
-        document.dispatchEvent(fakeKeyDownEvent);
-        
+        document.dispatchEvent(new KeyboardEvent('keydown', {
+          key: 'c', code: 'KeyC', metaKey: true, ctrlKey: e.ctrlKey, bubbles: true, cancelable: true,
+        }));
         setInspectorActive(true);
-        console.log("   ✓ Mode set to 'add', react-grab activated");
       }
     };
     document.addEventListener('keydown', handleKeyDown);
@@ -896,13 +841,9 @@ export const CursorOverlay = () => {
         })
       });
 
-      console.log('[client] Response received, status:', response.status);
-      if (!response.ok) {
-        throw new Error(`Server error: ${response.status} ${response.statusText}`);
-      }
+      if (!response.ok) throw new Error(`Server error: ${response.status}`);
       if (!response.body) throw new Error('No response body');
 
-      console.log('[client] Starting to read stream...');
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
@@ -925,17 +866,10 @@ export const CursorOverlay = () => {
       }, 5000);
 
       try {
-        let chunkCount = 0;
         while (true) {
           const { done, value } = await reader.read();
-          if (done) {
-            console.log('[client] Stream ended (done=true), chunks received:', chunkCount);
-            break;
-          }
-          chunkCount++;
-          console.log('[client] Received chunk', chunkCount, 'size:', value?.length);
-          
-          lastEventTime = Date.now(); // Reset timeout on each chunk
+          if (done) break;
+          lastEventTime = Date.now();
 
           buffer += decoder.decode(value, { stream: true });
           const lines = buffer.split('\n');
@@ -1019,7 +953,6 @@ export const CursorOverlay = () => {
         clearInterval(timeoutCheck);
       }
     } catch (e: any) {
-      console.error('[client] Fetch error:', e);
       setEvents(prev => [...prev, { 
         id: `error-${Date.now()}`, 
         type: 'error', 
@@ -1171,8 +1104,8 @@ export const CursorOverlay = () => {
         setActiveDiffFile(0);
         setShowDiffPanel(true);
       }
-    } catch (e) {
-      console.error('Failed to fetch diff:', e);
+    } catch {
+      // Diff fetch failed silently
     } finally {
       setDiffLoading(false);
     }
