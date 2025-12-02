@@ -7,6 +7,7 @@ import { init, getStack, getFileName } from 'react-grab/core';
 // ============================================================================
 const DEBUG = process.env.NODE_ENV === 'development';
 const log = (...args: any[]) => DEBUG && console.log(...args);
+const API_BASE = 'http://localhost:3333';
 
 // ============================================================================
 // CONSTANTS
@@ -127,6 +128,19 @@ interface FileDiff {
     additions: number;
     deletions: number;
   };
+}
+
+interface FileReference {
+  path: string;
+  name: string;
+  isImage: boolean;
+  previewUrl?: string; // For image previews
+}
+
+interface FileSearchResult {
+  path: string;
+  name: string;
+  isImage: boolean;
 }
 
 // ============================================================================
@@ -449,6 +463,15 @@ export const CursorOverlay = () => {
   const [diffData, setDiffData] = useState<FileDiff[]>([]);
   const [diffLoading, setDiffLoading] = useState(false);
   const [activeDiffFile, setActiveDiffFile] = useState(0);
+  
+  // File references & attachments state
+  const [fileReferences, setFileReferences] = useState<FileReference[]>([]);
+  const [showFileSearch, setShowFileSearch] = useState(false);
+  const [fileSearchResults, setFileSearchResults] = useState<FileSearchResult[]>([]);
+  const [fileSearchQuery, setFileSearchQuery] = useState('');
+  const [fileSearchIndex, setFileSearchIndex] = useState(0);
+  const [cursorPosition, setCursorPosition] = useState(0);
+  const fileSearchDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
   // Persist settings
   useEffect(() => { setStoredValue('cursor-bridge-model', model); }, [model]);
@@ -520,6 +543,97 @@ export const CursorOverlay = () => {
       }
     }
   }, [mode, inspectorActive, updateReactGrabColors]);
+
+  // ============================================================================
+  // FILE REFERENCES & @ AUTOCOMPLETE
+  // ============================================================================
+  
+  const searchFiles = useCallback(async (query: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/files?search=${encodeURIComponent(query)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setFileSearchResults(data.files || []);
+      setFileSearchIndex(0);
+    } catch (e) {
+      log('[file-search] Error:', e);
+    }
+  }, []);
+  
+  const handleInstructionChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = e.target.value;
+    const cursorPos = e.target.selectionStart || 0;
+    setInstruction(value);
+    setCursorPosition(cursorPos);
+    
+    const textBeforeCursor = value.slice(0, cursorPos);
+    const atMatch = textBeforeCursor.match(/@([^\s@]*)$/);
+    
+    if (atMatch) {
+      const query = atMatch[1];
+      setFileSearchQuery(query);
+      setShowFileSearch(true);
+      if (fileSearchDebounceRef.current) clearTimeout(fileSearchDebounceRef.current);
+      fileSearchDebounceRef.current = setTimeout(() => searchFiles(query), 150);
+    } else {
+      setShowFileSearch(false);
+      setFileSearchResults([]);
+    }
+  };
+  
+  const selectFileReference = (file: FileSearchResult) => {
+    const textBeforeCursor = instruction.slice(0, cursorPosition);
+    const textAfterCursor = instruction.slice(cursorPosition);
+    const atMatch = textBeforeCursor.match(/@([^\s@]*)$/);
+    
+    if (atMatch) {
+      const beforeAt = textBeforeCursor.slice(0, atMatch.index);
+      setInstruction(beforeAt + '@' + file.path + ' ' + textAfterCursor);
+      if (!fileReferences.some(f => f.path === file.path)) {
+        setFileReferences(prev => [...prev, { path: file.path, name: file.name, isImage: file.isImage }]);
+      }
+    }
+    setShowFileSearch(false);
+    setFileSearchResults([]);
+    instructionInputRef.current?.focus();
+  };
+  
+  const handleInstructionKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (showFileSearch && fileSearchResults.length > 0) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); setFileSearchIndex(prev => Math.min(prev + 1, fileSearchResults.length - 1)); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); setFileSearchIndex(prev => Math.max(prev - 1, 0)); }
+      else if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); selectFileReference(fileSearchResults[fileSearchIndex]); }
+      else if (e.key === 'Escape') { e.preventDefault(); setShowFileSearch(false); setFileSearchResults([]); }
+    } else if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendCommand();
+    }
+  };
+  
+  const handleImageUpload = async (file: File) => {
+    if (!file.type.startsWith('image/')) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const base64Data = (reader.result as string).split(',')[1];
+      try {
+        const res = await fetch(`${API_BASE}/api/upload-image`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filename: file.name, data: base64Data })
+        });
+        if (!res.ok) throw new Error('Upload failed');
+        const data = await res.json();
+        log('[upload] Success:', data.path);
+        setFileReferences(prev => [...prev, { path: data.path, name: data.name, isImage: true, previewUrl: reader.result as string }]);
+      } catch (e) { log('[upload] Error:', e); }
+    };
+    reader.readAsDataURL(file);
+  };
+  
+  const removeFileReference = (path: string) => {
+    setFileReferences(prev => prev.filter(f => f.path !== path));
+    setInstruction(prev => prev.replace(new RegExp(`@${path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s?`, 'g'), ''));
+  };
 
   // Initialize react-grab
   useEffect(() => {
@@ -777,87 +891,135 @@ export const CursorOverlay = () => {
           // Add mode specific
           mode: mode,
           addPosition: mode === 'add' ? addPosition : null,
+          // File references (images, code files)
+          fileReferences: fileReferences.map(f => ({ path: f.path, isImage: f.isImage })),
         })
       });
 
+      console.log('[client] Response received, status:', response.status);
+      if (!response.ok) {
+        throw new Error(`Server error: ${response.status} ${response.statusText}`);
+      }
       if (!response.body) throw new Error('No response body');
 
+      console.log('[client] Starting to read stream...');
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              const eventId = `${Date.now()}-${Math.random()}`;
-              
-              if (data.type === 'complete') {
-                setSessionId(data.sessionId);
-                setAgentSessionId(data.agentSessionId); // Store for --resume revisions
-                setCanRevert(data.canRevert);
-                setStatus(data.success ? 'success' : 'error');
-                
-                // Store detailed files changed info
-                const hasChanges = Array.isArray(data.filesChanged) && data.filesChanged.length > 0;
-                if (hasChanges) {
-                  setFilesChanged(data.filesChanged);
-                } else {
-                  setFilesChanged([]);
-                }
-                
-                // Add to revision history if successful with changes
-                if (data.success && hasChanges) {
-                  const fileCount = data.filesChanged.length;
-                  const totalLines = data.filesChanged.reduce((sum: number, f: any) => sum + (f.lines || 0), 0);
-                  const summary = `Modified ${fileCount} file${fileCount > 1 ? 's' : ''} (${totalLines} lines)`;
-                  
-                  setRevisionHistory(prev => [...prev, {
-                    sessionId: data.sessionId,
-                    instruction: currentInstructionRef.current,
-                    summary,
-                    filesChanged: data.filesChanged
-                  }]);
-                  
-                  setEvents(prev => [...prev, { 
-                    id: eventId, 
-                    type: 'result', 
-                    success: true, 
-                    text: summary 
-                  }]);
-                } else if (data.success && !hasChanges) {
-                  setEvents(prev => [...prev, { 
-                    id: eventId, 
-                    type: 'result', 
-                    success: true, 
-                    text: 'No changes were made' 
-                  }]);
-                } else if (!data.success) {
-                  setEvents(prev => [...prev, { 
-                    id: eventId, 
-                    type: 'error', 
-                    text: data.errorMessage || 'Operation failed' 
-                  }]);
-                }
-              } else if (data.type === 'error') {
-                setEvents(prev => [...prev, { ...data, id: eventId }]);
-                setStatus('error');
-              } else {
-                setEvents(prev => [...prev, { ...data, id: eventId }]);
-              }
-            } catch (e) {}
+      let receivedComplete = false;
+      let lastEventTime = Date.now();
+      
+      // Timeout checker - if no events for 30s, assume connection died
+      const timeoutCheck = setInterval(() => {
+        if (Date.now() - lastEventTime > 30000) {
+          clearInterval(timeoutCheck);
+          if (!receivedComplete) {
+            setEvents(prev => [...prev, { 
+              id: `timeout-${Date.now()}`, 
+              type: 'error', 
+              text: 'Connection timed out. The agent may still be processing. Try again if needed.' 
+            }]);
+            setStatus('error');
           }
         }
+      }, 5000);
+
+      try {
+        let chunkCount = 0;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            console.log('[client] Stream ended (done=true), chunks received:', chunkCount);
+            break;
+          }
+          chunkCount++;
+          console.log('[client] Received chunk', chunkCount, 'size:', value?.length);
+          
+          lastEventTime = Date.now(); // Reset timeout on each chunk
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const data = JSON.parse(line.slice(6));
+                const eventId = `${Date.now()}-${Math.random()}`;
+                
+                if (data.type === 'complete') {
+                  receivedComplete = true;
+                  setSessionId(data.sessionId);
+                  setAgentSessionId(data.agentSessionId); // Store for --resume revisions
+                  setCanRevert(data.canRevert);
+                  setStatus(data.success ? 'success' : 'error');
+                  
+                  // Store detailed files changed info
+                  const hasChanges = Array.isArray(data.filesChanged) && data.filesChanged.length > 0;
+                  if (hasChanges) {
+                    setFilesChanged(data.filesChanged);
+                  } else {
+                    setFilesChanged([]);
+                  }
+                  
+                  // Add to revision history if successful with changes
+                  if (data.success && hasChanges) {
+                    const fileCount = data.filesChanged.length;
+                    const totalLines = data.filesChanged.reduce((sum: number, f: any) => sum + (f.lines || 0), 0);
+                    const summary = `Modified ${fileCount} file${fileCount > 1 ? 's' : ''} (${totalLines} lines)`;
+                    
+                    setRevisionHistory(prev => [...prev, {
+                      sessionId: data.sessionId,
+                      instruction: currentInstructionRef.current,
+                      summary,
+                      filesChanged: data.filesChanged
+                    }]);
+                    
+                    setEvents(prev => [...prev, { 
+                      id: eventId, 
+                      type: 'result', 
+                      success: true, 
+                      text: summary 
+                    }]);
+                  } else if (data.success && !hasChanges) {
+                    setEvents(prev => [...prev, { 
+                      id: eventId, 
+                      type: 'result', 
+                      success: true, 
+                      text: 'No changes were made' 
+                    }]);
+                  } else if (!data.success) {
+                    setEvents(prev => [...prev, { 
+                      id: eventId, 
+                      type: 'error', 
+                      text: data.errorMessage || 'Operation failed' 
+                    }]);
+                  }
+                } else if (data.type === 'error') {
+                  setEvents(prev => [...prev, { ...data, id: eventId }]);
+                  setStatus('error');
+                } else {
+                  setEvents(prev => [...prev, { ...data, id: eventId }]);
+                }
+              } catch (e) {}
+            }
+          }
+        }
+        
+        // Stream ended - check if we got a complete event
+        if (!receivedComplete) {
+          setEvents(prev => [...prev, { 
+            id: `disconnect-${Date.now()}`, 
+            type: 'error', 
+            text: 'Connection closed unexpectedly. Try again.' 
+          }]);
+          setStatus('error');
+        }
+      } finally {
+        clearInterval(timeoutCheck);
       }
     } catch (e: any) {
+      console.error('[client] Fetch error:', e);
       setEvents(prev => [...prev, { 
         id: `error-${Date.now()}`, 
         type: 'error', 
@@ -865,6 +1027,16 @@ export const CursorOverlay = () => {
       }]);
       setStatus('error');
     }
+  };
+
+  // Cancel running operation
+  const handleCancel = () => {
+    setStatus('error');
+    setEvents(prev => [...prev, { 
+      id: `cancel-${Date.now()}`, 
+      type: 'error', 
+      text: 'Cancelled by user' 
+    }]);
   };
 
   // Revert changes - keeps panel open for another attempt
@@ -970,6 +1142,10 @@ export const CursorOverlay = () => {
     setMode('edit');
     setShowPositionPicker(false);
     setAddPosition('after');
+    // Clear file references
+    setFileReferences([]);
+    setShowFileSearch(false);
+    setFileSearchResults([]);
   };
 
   // Remove element from selection
@@ -1413,29 +1589,191 @@ export const CursorOverlay = () => {
 
           {/* Input Area */}
           {!isComplete && (
-            <div style={{ padding: '16px', flexShrink: 0 }}>
-              <textarea
-                ref={instructionInputRef}
-                autoFocus
-                rows={3}
-                disabled={isProcessing}
-                value={instruction}
-                onChange={e => !isProcessing && setInstruction(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && !e.shiftKey && !isProcessing && (e.preventDefault(), sendCommand())}
-                placeholder={isProcessing ? "Processing..." : mode === 'add' ? "Describe what to add..." : "Describe the change..."}
-                style={{
-                  width: '100%',
-                  background: 'transparent',
-                  border: 'none',
-                  outline: 'none',
-                  color: colors.textPrimary,
-                  fontSize: '14px',
-                  fontFamily: 'system-ui, sans-serif',
-                  lineHeight: 1.6,
-                  resize: 'none',
-                  opacity: isProcessing ? 0.5 : 1,
-                }}
-              />
+            <div 
+              style={{ padding: '16px', flexShrink: 0, position: 'relative' }}
+              onDrop={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const files = Array.from(e.dataTransfer.files);
+                files.forEach(file => handleImageUpload(file));
+              }}
+              onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+            >
+              {/* File References Display */}
+              {fileReferences.length > 0 && (
+                <div style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: '6px',
+                  marginBottom: '10px',
+                }}>
+                  {fileReferences.map((file, idx) => (
+                    <div
+                      key={file.path}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '4px 8px',
+                        background: file.isImage ? 'rgba(6,182,212,0.15)' : 'rgba(52,211,153,0.15)',
+                        borderRadius: '6px',
+                        fontSize: '11px',
+                        color: file.isImage ? '#06B6D4' : '#34D399',
+                        border: `1px solid ${file.isImage ? 'rgba(6,182,212,0.3)' : 'rgba(52,211,153,0.3)'}`,
+                      }}
+                    >
+                      {file.isImage && file.previewUrl && (
+                        <img 
+                          src={file.previewUrl} 
+                          alt={file.name}
+                          style={{ width: 18, height: 18, borderRadius: 3, objectFit: 'cover' }}
+                        />
+                      )}
+                      <span>{file.isImage ? '🖼' : '📄'}</span>
+                      <span style={{ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {file.name}
+                      </span>
+                      <button
+                        onClick={() => removeFileReference(file.path)}
+                        style={{
+                          background: 'transparent',
+                          border: 'none',
+                          color: 'inherit',
+                          cursor: 'pointer',
+                          padding: 0,
+                          fontSize: '12px',
+                          opacity: 0.7,
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              
+              {/* Textarea with @ autocomplete */}
+              <div style={{ position: 'relative' }}>
+                <textarea
+                  ref={instructionInputRef}
+                  autoFocus
+                  rows={3}
+                  disabled={isProcessing}
+                  value={instruction}
+                  onChange={!isProcessing ? handleInstructionChange : undefined}
+                  onKeyDown={!isProcessing ? handleInstructionKeyDown : undefined}
+                  placeholder={isProcessing ? "Processing..." : mode === 'add' ? "Describe what to add... (@ for files, drop images)" : "Describe the change... (@ for files, drop images)"}
+                  style={{
+                    width: '100%',
+                    background: 'transparent',
+                    border: 'none',
+                    outline: 'none',
+                    color: colors.textPrimary,
+                    fontSize: '14px',
+                    fontFamily: 'system-ui, sans-serif',
+                    lineHeight: 1.6,
+                    resize: 'none',
+                    opacity: isProcessing ? 0.5 : 1,
+                  }}
+                />
+                
+                {/* @ Autocomplete Dropdown */}
+                {showFileSearch && fileSearchResults.length > 0 && (
+                  <div style={{
+                    position: 'absolute',
+                    bottom: '100%',
+                    left: 0,
+                    right: 0,
+                    maxHeight: '200px',
+                    overflowY: 'auto',
+                    background: colors.surface,
+                    border: `1px solid ${colors.borderSubtle}`,
+                    borderRadius: '8px',
+                    marginBottom: '4px',
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+                    zIndex: 100,
+                  }}>
+                    {fileSearchResults.map((file, idx) => (
+                      <div
+                        key={file.path}
+                        onClick={() => selectFileReference(file)}
+                        style={{
+                          padding: '8px 12px',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          background: idx === fileSearchIndex ? colors.elevated : 'transparent',
+                          borderBottom: idx < fileSearchResults.length - 1 ? `1px solid ${colors.borderSubtle}` : 'none',
+                        }}
+                        onMouseEnter={() => setFileSearchIndex(idx)}
+                      >
+                        <span style={{ fontSize: '14px' }}>{file.isImage ? '🖼' : '📄'}</span>
+                        <div style={{ flex: 1, overflow: 'hidden' }}>
+                          <div style={{ 
+                            fontSize: '12px', 
+                            color: colors.textPrimary,
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                          }}>
+                            {file.name}
+                          </div>
+                          <div style={{ 
+                            fontSize: '10px', 
+                            color: colors.textTertiary,
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                          }}>
+                            {file.path}
+                          </div>
+                        </div>
+                        {file.isImage && <span style={{ fontSize: '10px', color: '#06B6D4' }}>IMAGE</span>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              
+              {/* Upload button + hint */}
+              <div style={{ 
+                display: 'flex', 
+                justifyContent: 'space-between', 
+                alignItems: 'center',
+                marginTop: '8px',
+              }}>
+                <label style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  padding: '4px 8px',
+                  background: colors.elevated,
+                  borderRadius: '6px',
+                  fontSize: '11px',
+                  color: colors.textTertiary,
+                  cursor: 'pointer',
+                  border: `1px solid ${colors.borderSubtle}`,
+                  transition: 'all 0.15s ease',
+                }}>
+                  <span>📎</span>
+                  <span>Attach</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    style={{ display: 'none' }}
+                    onChange={(e) => {
+                      const files = Array.from(e.target.files || []);
+                      files.forEach(file => handleImageUpload(file));
+                      e.target.value = ''; // Reset
+                    }}
+                  />
+                </label>
+                <span style={{ fontSize: '10px', color: colors.textTertiary }}>
+                  @ for files • drop images
+                </span>
+              </div>
             </div>
           )}
 
@@ -1655,23 +1993,44 @@ export const CursorOverlay = () => {
                 </button>
               </div>
               
-              <button
-                onClick={sendCommand}
-                disabled={isProcessing || !instruction.trim()}
-                style={{
-                  background: !isProcessing && instruction.trim() ? colors.textPrimary : colors.overlay,
-                  color: !isProcessing && instruction.trim() ? colors.void : colors.textMuted,
-                  border: 'none',
-                  borderRadius: '8px',
-                  padding: '8px 16px',
-                  fontSize: '12px',
-                  fontWeight: 600,
-                  cursor: !isProcessing && instruction.trim() ? 'pointer' : 'not-allowed',
-                  boxShadow: !isProcessing && instruction.trim() ? '0 0 20px rgba(255,255,255,0.1)' : 'none',
-                }}
-              >
-                {isProcessing ? 'Running...' : 'Send'}
-              </button>
+              {isProcessing ? (
+                <button
+                  onClick={handleCancel}
+                  style={{
+                    background: 'rgba(239,68,68,0.2)',
+                    color: '#EF4444',
+                    border: '1px solid rgba(239,68,68,0.3)',
+                    borderRadius: '8px',
+                    padding: '8px 16px',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                  }}
+                >
+                  <span style={{ fontSize: '10px' }}>⏹</span> Cancel
+                </button>
+              ) : (
+                <button
+                  onClick={sendCommand}
+                  disabled={!instruction.trim()}
+                  style={{
+                    background: instruction.trim() ? colors.textPrimary : colors.overlay,
+                    color: instruction.trim() ? colors.void : colors.textMuted,
+                    border: 'none',
+                    borderRadius: '8px',
+                    padding: '8px 16px',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    cursor: instruction.trim() ? 'pointer' : 'not-allowed',
+                    boxShadow: instruction.trim() ? '0 0 20px rgba(255,255,255,0.1)' : 'none',
+                  }}
+                >
+                  Send
+                </button>
+              )}
             </div>
           )}
         </div>
