@@ -2,13 +2,16 @@
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
-const { spawn, exec } = require('child_process');
+const { exec } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const Diff = require('diff');
 
 // Modular imports
 const { PROMPT_TEMPLATES, ADD_PROMPT_TEMPLATES } = require('./src/server/prompts');
+const { cleanFilePath, findCursorAgent, injectVariables } = require('./src/server/utils');
+const { runCursorAgentStream } = require('./src/server/runner');
+const { revertStore } = require('./src/server/store');
 
 const app = express();
 app.use(cors());
@@ -17,188 +20,6 @@ app.use(bodyParser.json({ limit: '10mb' }));
 const PORT = 3333;
 const DEBUG = process.env.DEBUG === 'true' || process.env.CURSOR_BRIDGE_DEBUG === 'true';
 const log = (...args) => DEBUG && console.log(...args);
-
-// Store for reverts (in-memory, keyed by session)
-const revertStore = new Map();
-
-// ============================================================================
-// UTILITIES
-// ============================================================================
-
-const cleanFilePath = (rawPath) => {
-  if (!rawPath) return null;
-  let cleaned = rawPath.split('?')[0];
-  const prefixes = [
-    'about://React/Server/',
-    'webpack-internal://',
-    '///rsc/./',
-    '//rsc/./',
-    '/rsc/./',
-    'rsc/./',
-    '///app-pages-browser/./',  // Next.js App Router prefix
-    '//app-pages-browser/./',
-    '/app-pages-browser/./',
-    'app-pages-browser/./',
-  ];
-  for (const prefix of prefixes) {
-    if (cleaned.includes(prefix)) cleaned = cleaned.split(prefix).pop();
-  }
-  return cleaned.replace(/^\/+/, '');
-};
-
-const findCursorAgent = () => {
-  const homeDir = process.env.HOME || process.env.USERPROFILE;
-  const possiblePaths = [
-    'cursor-agent',
-    path.join(homeDir, '.local/bin/cursor-agent'),
-    path.join(homeDir, '.cursor/bin/cursor-agent'),
-    '/usr/local/bin/cursor-agent',
-  ];
-  
-  for (const p of possiblePaths) {
-    try {
-      if (p === 'cursor-agent') {
-        const result = require('child_process').spawnSync('which', [p]);
-        if (result.status === 0) return p;
-      } else if (fs.existsSync(p)) {
-        return p;
-      }
-    } catch (e) {}
-  }
-  return null;
-};
-
-const injectVariables = (template, vars) => {
-  return template
-    .replace(/\$\{filePath\}/g, vars.filePath || '')
-    .replace(/\$\{component\}/g, vars.component || '')
-    .replace(/\$\{lineNumber\}/g, vars.lineNumber || '~')
-    .replace(/\$\{instruction\}/g, vars.instruction || '')
-    .replace(/\$\{elementText\}/g, vars.elementText || '')
-    .replace(/\$\{elementTag\}/g, vars.elementTag || 'element')
-    .replace(/\$\{elementClasses\}/g, vars.elementClasses || '')
-    .replace(/\$\{elementHTML\}/g, vars.elementHTML || '')
-    .replace(/\$\{parentContext\}/g, vars.parentContext || '');
-};
-
-// ============================================================================
-// STREAMING CURSOR AGENT RUNNER
-// ============================================================================
-
-const runCursorAgentStream = (prompt, cwd, options, onEvent, onComplete, onError) => {
-  const cursorAgentPath = findCursorAgent();
-  
-  if (!cursorAgentPath) {
-    onError(new Error('cursor-agent not found. Install: curl https://cursor.com/install -fsS | bash'));
-    return;
-  }
-
-  // Write prompt to temp file
-  const tempFile = path.join(require('os').tmpdir(), `cursor-prompt-${Date.now()}.txt`);
-  fs.writeFileSync(tempFile, prompt);
-
-  // Build args array
-  const args = ['-p', '-f', '--output-format', 'stream-json', '--stream-partial-output'];
-  if (options.model && options.model !== 'auto') {
-    args.push('--model', options.model);
-  }
-  if (options.chatId) {
-    args.push('--resume', options.chatId);
-  }
-
-  log(`[stream] Starting: cursor-agent ${args.join(' ')}`);
-
-  // Use spawn for streaming
-  const child = spawn('sh', ['-c', `cat "${tempFile}" | "${cursorAgentPath}" ${args.join(' ')}`], {
-    cwd: cwd,
-    env: { ...process.env, PATH: `${process.env.HOME}/.local/bin:${process.env.PATH}` },
-  });
-
-  let buffer = '';
-  const fileWrites = []; // Track file writes for revert
-  const fileWriteDetails = {}; // Track detailed info about each write (path -> {lines, size})
-
-  child.stdout.on('data', (data) => {
-    buffer += data.toString();
-    
-    // Process complete lines (NDJSON)
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || ''; // Keep incomplete line in buffer
-    
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      
-      try {
-        const event = JSON.parse(line);
-        
-        if (event.type === 'tool_call' && event.subtype === 'started') {
-          const toolCall = event.tool_call?.writeToolCall || event.tool_call?.editToolCall;
-          if (toolCall?.args?.path) {
-            const writePath = toolCall.args.path;
-            const fullPath = path.isAbsolute(writePath) ? writePath : path.join(cwd, writePath);
-            
-            if (!fileWrites.some(fw => fw.relativePath === writePath)) {
-              if (fs.existsSync(fullPath)) {
-                fileWrites.push({ path: fullPath, original: fs.readFileSync(fullPath, 'utf-8'), relativePath: writePath });
-              } else {
-                fileWrites.push({ path: fullPath, original: null, relativePath: writePath, isNew: true });
-              }
-            }
-          }
-        }
-        
-        if (event.type === 'tool_call' && event.subtype === 'completed') {
-          const result = event.tool_call?.writeToolCall?.result?.success || event.tool_call?.editToolCall?.result?.success;
-          const toolCall = event.tool_call?.writeToolCall || event.tool_call?.editToolCall;
-          
-          if (result && toolCall?.args?.path) {
-            fileWriteDetails[toolCall.args.path] = {
-              lines: result.linesAdded || result.linesCreated || 0,
-              size: result.fileSize || 0
-            };
-          }
-        }
-        
-        onEvent(event);
-      } catch (e) {
-        // Not valid JSON, might be partial
-      }
-    }
-  });
-
-  let stderrBuffer = '';
-  
-  child.stderr.on('data', (data) => {
-    const text = data.toString().trim();
-    if (text) {
-      console.log(`[stderr] ${text}`);  // Always show errors
-      stderrBuffer += text + '\n';
-    }
-  });
-
-  child.on('close', (code) => {
-    // Clean up temp file
-    try { fs.unlinkSync(tempFile); } catch (e) {}
-    
-    // Process any remaining buffer
-    if (buffer.trim()) {
-      try {
-        const event = JSON.parse(buffer);
-        onEvent(event);
-      } catch (e) {}
-    }
-    
-    console.log(code === 0 ? '[done] ✓' : `[done] exit ${code}`);
-    onComplete(code === 0, fileWrites, fileWriteDetails, stderrBuffer.trim());
-  });
-
-  child.on('error', (err) => {
-    try { fs.unlinkSync(tempFile); } catch (e) {}
-    onError(err);
-  });
-
-  return child;
-};
 
 // ============================================================================
 // STREAMING API ENDPOINT (SSE)
@@ -507,7 +328,8 @@ app.post('/cursor-command-stream', async (req, res) => {
     (error) => {
       sendEvent('error', { message: error.message });
       res.end();
-    }
+    },
+    log
   );
 
   // Handle client disconnect
