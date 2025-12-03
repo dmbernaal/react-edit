@@ -6,11 +6,12 @@ import { colors } from '../../constants';
 interface TitaniumShellProps {
     children: React.ReactNode;
     mode: 'edit' | 'add';
+    isActive?: boolean;
     style?: React.CSSProperties;
     onMouseDown?: (e: React.MouseEvent) => void;
 }
 
-export const TitaniumShell = ({ children, mode, style, onMouseDown }: TitaniumShellProps) => {
+export const TitaniumShell = ({ children, mode, isActive, style, onMouseDown }: TitaniumShellProps) => {
     return (
         <div
             onMouseDown={onMouseDown}
@@ -24,7 +25,7 @@ export const TitaniumShell = ({ children, mode, style, onMouseDown }: TitaniumSh
                 ...style
             }}
         >
-            <LivingBorder mode={mode} />
+            <LivingBorder mode={mode} isActive={isActive} />
             <TitaniumCore>
                 {children}
             </TitaniumCore>

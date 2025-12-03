@@ -14,8 +14,8 @@ import type {
 import { DEBUG, log, API_BASE, MODELS, PROMPT_TEMPLATES, colors } from './src/client/constants';
 import { cleanFilePath, inferFileFromRoute, getStoredValue, setStoredValue } from './src/client/utils';
 import { Dropdown, Toggle, StreamStep } from './src/client/components';
-import { TitaniumShell } from './src/client/components/Titanium';
-import { ArrowUp, Paperclip, Sparkles, X, Image as ImageIcon, FileText, Zap } from 'lucide-react';
+import { TitaniumShell, TitaniumButton } from './src/client/components/Titanium';
+import { ArrowUp, Paperclip, Sparkles, X, Image as ImageIcon, FileText, Zap, Command } from 'lucide-react';
 
 // ============================================================================
 // MAIN COMPONENT
@@ -796,6 +796,7 @@ export const CursorOverlay = () => {
       {active && (
         <TitaniumShell
           mode={mode}
+          isActive={isProcessing}
           onMouseDown={handleMouseDown}
           style={{
             position: 'fixed',
@@ -1084,39 +1085,20 @@ export const CursorOverlay = () => {
                   </div>
 
                   {/* The Gem Button */}
-                  <button
-                    onClick={sendCommand}
-                    disabled={!instruction.trim() || isProcessing}
-                    style={{
-                      background: instruction.trim()
-                        ? `linear-gradient(135deg, ${colors.brand} 0%, #A855F7 100%)`
-                        : 'rgba(255,255,255,0.05)',
-                      border: 'none',
-                      borderRadius: '8px', // Match other buttons
-                      width: '32px', // Match height
-                      height: '32px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      cursor: instruction.trim() ? 'pointer' : 'not-allowed',
-                      color: instruction.trim() ? '#FFF' : 'rgba(255,255,255,0.2)',
-                      boxShadow: instruction.trim() ? `0 0 20px ${colors.brandGlow}` : 'none',
-                      transition: 'all 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
-                      transform: instruction.trim() ? 'scale(1)' : 'scale(0.95)',
-                    }}
-                    onMouseEnter={e => instruction.trim() && (e.currentTarget.style.transform = 'scale(1.05)')}
-                    onMouseLeave={e => instruction.trim() && (e.currentTarget.style.transform = 'scale(1)')}
-                  >
-                    {isProcessing ? (
-                      <div style={{
-                        width: '14px', height: '14px', borderRadius: '50%',
-                        border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#FFF',
-                        animation: 'spin 1s linear infinite',
-                      }} />
-                    ) : (
-                      <ArrowUp size={18} strokeWidth={2.5} />
-                    )}
-                  </button>
+                  <div style={{ height: '36px' }}>
+                    <TitaniumButton
+                      onClick={sendCommand}
+                      disabled={!instruction.trim() || isProcessing}
+                      isLoading={isProcessing}
+                      mode={mode}
+                    >
+                      <span>{mode === 'add' ? 'Add it' : 'Edit it'}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '2px', opacity: 0.8 }}>
+                        <Command size={12} strokeWidth={3} />
+                        <ArrowUp size={14} strokeWidth={3} />
+                      </div>
+                    </TitaniumButton>
+                  </div>
                 </div>
               </div>
             )}
