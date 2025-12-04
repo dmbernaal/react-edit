@@ -19,6 +19,7 @@ export const LivingBorder = ({ mode, isActive = false }: LivingBorderProps) => {
             inset: '-50%', // Oversize to cover corners during rotation
             zIndex: 0,
             overflow: 'hidden',
+            pointerEvents: 'none', // Visual element only - never capture mouse events
         }}>
             <motion.div
                 animate={{
@@ -36,7 +37,7 @@ export const LivingBorder = ({ mode, isActive = false }: LivingBorderProps) => {
                 style={{
                     width: '100%',
                     height: '100%',
-                    background: isActive ? gradient : 'rgba(255,255,255,0.1)', // Simple border when idle
+                    background: isActive ? gradient : 'transparent', // No background when idle
                     filter: 'blur(20px)',
                 }}
             />

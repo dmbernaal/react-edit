@@ -42,11 +42,11 @@ export const TitaniumButton = ({ onClick, disabled, isLoading, mode, children }:
             whileTap={{ scale: 0.98 }}
             style={{
                 position: 'relative',
-                height: '36px',
-                padding: '0 16px',
-                borderRadius: '10px',
+                height: '28px', // Reduced to match other controls
+                padding: '0 12px', // Slightly reduced padding
+                borderRadius: '999px', // Pill shape
                 overflow: 'hidden',
-                border: '1px solid rgba(255,255,255,0.08)', // Containment Ring (Precision)
+                // border: '1px solid rgba(255,255,255,0.08)', // Removed border
                 cursor: disabled || isLoading ? 'not-allowed' : 'pointer',
                 // Subtle, premium colored shadow
                 boxShadow: disabled ? 'none' : `0 4px 12px -2px ${theme.shadow}, 0 2px 6px -1px ${theme.shadow}`,

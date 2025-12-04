@@ -45,6 +45,7 @@ export const CursorOverlay = () => {
   const [filesChanged, setFilesChanged] = useState<{ path: string; lines: number; isNew?: boolean }[]>([]);
   const eventsContainerRef = useRef<HTMLDivElement>(null);
   const instructionInputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Revision history - tracks all edits in the current revision chain
   const [revisionHistory, setRevisionHistory] = useState<RevisionStep[]>([]);
@@ -61,7 +62,7 @@ export const CursorOverlay = () => {
   // UI state
   const [showPromptEditor, setShowPromptEditor] = useState(false);
   const [editingPrompt, setEditingPrompt] = useState('');
-  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const [position, setPosition] = useState<{ x: number; y: number } | null>(null); // null = not yet calculated
   const [isDragging, setIsDragging] = useState(false);
   const dragRef = useRef<{ startX: number; startY: number; initialX: number; initialY: number } | null>(null);
 
@@ -85,6 +86,22 @@ export const CursorOverlay = () => {
   useEffect(() => { setStoredValue('cursor-bridge-memory', memoryMode); }, [memoryMode]);
   useEffect(() => { setStoredValue('cursor-bridge-template', promptTemplate); }, [promptTemplate]);
   useEffect(() => { setStoredValue('cursor-bridge-custom-prompt', customPrompt); }, [customPrompt]);
+
+  // Calculate initial centered position on mount
+  useEffect(() => {
+    if (position === null && typeof window !== 'undefined') {
+      const panelWidth = 600;
+      const panelHeight = 350; // Approximate height
+      // Calculate offset from bottom-right to center the panel
+      // bottom: 20px - y, right: 20px - x
+      // To center: we need bottom = (vh - panelHeight) / 2, right = (vw - panelWidth) / 2
+      // So: 20 - y = (vh - panelHeight) / 2 => y = 20 - (vh - panelHeight) / 2
+      // And: 20 - x = (vw - panelWidth) / 2 => x = 20 - (vw - panelWidth) / 2
+      const centerY = 20 - (window.innerHeight - panelHeight) / 2;
+      const centerX = 20 - (window.innerWidth - panelWidth) / 2;
+      setPosition({ x: centerX, y: centerY });
+    }
+  }, [position]);
 
   // Keep targets ref in sync for use in callbacks (avoids stale closure)
   useEffect(() => {
@@ -231,6 +248,25 @@ export const CursorOverlay = () => {
     reader.readAsDataURL(file);
   };
 
+  // Handle file selection from file input (images only - use @ for code files)
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    for (const file of Array.from(files)) {
+      // Upload images to temp directory
+      if (file.type.startsWith('image/')) {
+        await handleImageUpload(file);
+      }
+      // Note: Code files should be added via @ autocomplete which searches the project
+    }
+
+    // Reset the input so the same file can be selected again
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
   const removeFileReference = (path: string) => {
     setFileReferences(prev => prev.filter(f => f.path !== path));
     setInstruction(prev => prev.replace(new RegExp(`@${path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s?`, 'g'), ''));
@@ -334,6 +370,7 @@ export const CursorOverlay = () => {
     if ((e.target as HTMLElement).tagName === 'TEXTAREA' ||
       (e.target as HTMLElement).tagName === 'BUTTON' ||
       (e.target as HTMLElement).tagName === 'INPUT') return;
+    if (position === null) return; // Not ready yet
     setIsDragging(true);
     dragRef.current = { startX: e.clientX, startY: e.clientY, initialX: position.x, initialY: position.y };
   }, [position]);
@@ -800,346 +837,223 @@ export const CursorOverlay = () => {
           onMouseDown={handleMouseDown}
           style={{
             position: 'fixed',
-            bottom: `calc(80px - ${position.y}px)`,
-            left: `calc(50% + ${position.x}px)`,
-            transform: 'translateX(-50%)',
-            zIndex: 99999,
-            width: '560px', // Slightly wider for premium feel
-            maxHeight: '70vh',
-            cursor: isDragging ? 'grabbing' : 'default',
-            userSelect: 'none',
-            display: 'flex',
-            flexDirection: 'column',
+            bottom: `calc(20px - ${position?.y ?? 0}px)`, // Dynamic Y
+            right: `calc(20px - ${position?.x ?? 0}px)`,   // Dynamic X (inverted for right alignment)
+            width: '600px',
+            zIndex: 999999,
+            fontFamily: 'Inter, system-ui, sans-serif',
           }}
-        >
-          {/* Header / Status Area */}
-          <div style={{
-            padding: '20px 24px 10px 24px',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            flexShrink: 0,
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              {/* Status Dot */}
+          header={
+            <>
+              {/* Mode Indicator / Context Label */}
               <div style={{
-                width: '8px',
-                height: '8px',
-                borderRadius: '50%',
-                background: mode === 'add' ? colors.addMode :
-                  isProcessing ? colors.warning : status === 'success' ? colors.success : status === 'error' ? colors.error : colors.editMode,
-                boxShadow: mode === 'add' ? `0 0 10px ${colors.addModeGlow}` :
-                  isProcessing ? '0 0 10px rgba(251,191,36,0.5)' : `0 0 10px ${colors.editModeGlow}`,
-                animation: isProcessing ? 'pulse 1s infinite' : 'none',
-              }} />
-
-              {/* Context Info */}
-              <div style={{ display: 'flex', flexDirection: 'column' }}>
-                <span style={{
-                  color: colors.textPrimary,
-                  fontSize: '13px',
-                  fontWeight: 600,
-                  letterSpacing: '-0.01em'
-                }}>
-                  {mode === 'add' ? 'Add to Codebase' : 'Edit Codebase'}
-                </span>
-                <span style={{
-                  color: colors.textTertiary,
-                  fontSize: '11px',
-                  fontFamily: 'ui-monospace, monospace'
-                }}>
-                  {targets.length > 0 ? (
-                    <>
-                      {targets[0]?.fileName?.split('/').pop()}
-                      {targets.length > 1 && ` +${targets.length - 1}`}
-                      <span style={{ margin: '0 6px', opacity: 0.3 }}>|</span>
-                      L{targets[0]?.lineNumber || '~'}
-                    </>
-                  ) : 'No selection'}
-                </span>
-              </div>
-            </div>
-
-            {/* Close Button */}
-            <button
-              onClick={closeChat}
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: colors.textTertiary,
-                cursor: 'pointer',
-                padding: '4px',
-                borderRadius: '4px',
                 display: 'flex',
                 alignItems: 'center',
-                justifyContent: 'center',
-                transition: 'all 0.2s ease',
-              }}
-              onMouseEnter={e => e.currentTarget.style.color = colors.textPrimary}
-              onMouseLeave={e => e.currentTarget.style.color = colors.textTertiary}
-            >
-              <X size={16} />
-            </button>
-          </div>
-
-          {/* Content Area */}
-          <div style={{
-            padding: '0 12px 12px 12px', // Tighter padding (was 24px)
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '12px',
-            flex: 1,
-            overflow: 'hidden',
-          }}>
-
-            {/* Stream/History Area */}
-            {(events.length > 0 || revisionHistory.length > 0) && (
-              <div
-                ref={eventsContainerRef}
-                style={{
-                  flex: 1,
-                  overflowY: 'auto',
-                  minHeight: '100px',
-                  marginBottom: '10px',
-                  paddingRight: '4px',
-                }}
-              >
-                {/* Revision History */}
-                {revisionHistory.length > 0 && (
-                  <div style={{ marginBottom: '16px' }}>
-                    {revisionHistory.map((step, i) => (
-                      <div key={step.sessionId} style={{
-                        padding: '8px 12px',
-                        background: 'rgba(255,255,255,0.03)',
-                        borderRadius: '8px',
-                        marginBottom: '8px',
-                        border: '1px solid rgba(255,255,255,0.05)',
-                      }}>
-                        <div style={{ fontSize: '11px', color: colors.textSecondary, marginBottom: '4px' }}>
-                          <span style={{ color: colors.accent, marginRight: '6px' }}>#{i + 1}</span>
-                          {step.instruction}
-                        </div>
-                        <div style={{ fontSize: '10px', color: colors.success, display: 'flex', alignItems: 'center', gap: '4px' }}>
-                          <Zap size={10} /> {step.summary}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Live Events */}
-                {events.map((event, i) => (
-                  <StreamStep key={event.id} event={event} isLast={i === events.length - 1} />
-                ))}
-              </div>
-            )}
-
-            {/* Input Slot (Recessed) */}
-            {!isComplete && (
-              <div style={{
-                background: 'rgba(255,255,255,0.02)', // Lighter, more subtle (was rgba(0,0,0,0.3))
-                border: '1px solid rgba(255,255,255,0.08)',
-                borderRadius: '12px',
-                padding: '12px', // Slightly tighter padding
-                boxShadow: 'inset 0 2px 6px rgba(0,0,0,0.2)', // Softer inset shadow
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '10px',
-                transition: 'border-color 0.2s ease',
-              }}
-                onFocus={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)'}
-                onBlur={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'}
-              >
-                {/* File References */}
-                {fileReferences.length > 0 && (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                    {fileReferences.map((file) => (
-                      <div key={file.path} style={{
-                        display: 'flex', alignItems: 'center', gap: '6px',
-                        padding: '4px 8px',
-                        background: 'rgba(255,255,255,0.05)',
-                        borderRadius: '6px',
-                        fontSize: '11px',
-                        color: colors.textSecondary,
-                        border: '1px solid rgba(255,255,255,0.05)',
-                      }}>
-                        {file.isImage ? <ImageIcon size={12} /> : <FileText size={12} />}
-                        <span style={{ maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {file.name}
-                        </span>
-                        <button onClick={() => removeFileReference(file.path)} style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0 }}>
-                          <X size={10} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Textarea */}
-                <div style={{ position: 'relative' }}>
-                  <textarea
-                    ref={instructionInputRef}
-                    autoFocus
-                    rows={events.length > 0 ? 2 : 3}
-                    disabled={isProcessing}
-                    value={instruction}
-                    onChange={!isProcessing ? handleInstructionChange : undefined}
-                    onKeyDown={!isProcessing ? handleInstructionKeyDown : undefined}
-                    placeholder={isProcessing ? "Processing..." : mode === 'add' ? "Describe what to add... (Use @ to reference files)" : "Describe your change... (Use @ to reference files, ⌘C to add more)"}
-                    style={{
-                      width: '100%',
-                      background: 'transparent',
-                      border: 'none',
-                      outline: 'none',
-                      color: colors.textPrimary,
-                      fontSize: '15px',
-                      fontFamily: 'system-ui, sans-serif',
-                      lineHeight: 1.5,
-                      resize: 'none',
-                      opacity: isProcessing ? 0.5 : 1,
-                      minHeight: '80px', // Taller input area (was 60px)
-                    }}
-                  />
-
-                  {/* @ Autocomplete */}
-                  {showFileSearch && fileSearchResults.length > 0 && (
-                    <div style={{
-                      position: 'absolute',
-                      bottom: '100%',
-                      left: 0,
-                      right: 0,
-                      maxHeight: '200px',
-                      overflowY: 'auto',
-                      background: '#1C1C1C',
-                      border: '1px solid rgba(255,255,255,0.1)',
-                      borderRadius: '8px',
-                      marginBottom: '8px',
-                      boxShadow: '0 10px 40px rgba(0,0,0,0.5)',
-                      zIndex: 100,
-                    }}>
-                      {fileSearchResults.map((file, idx) => (
-                        <div
-                          key={file.path}
-                          onClick={() => selectFileReference(file)}
-                          style={{
-                            padding: '8px 12px',
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '8px',
-                            background: idx === fileSearchIndex ? 'rgba(255,255,255,0.05)' : 'transparent',
-                          }}
-                        >
-                          {file.isImage ? <ImageIcon size={14} /> : <FileText size={14} />}
-                          <div style={{ flex: 1, overflow: 'hidden' }}>
-                            <div style={{ fontSize: '13px', color: colors.textPrimary }}>{file.name}</div>
-                            <div style={{ fontSize: '11px', color: colors.textTertiary }}>{file.path}</div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                gap: '12px',
+                pointerEvents: 'none', // Let clicks pass through to drag handle unless interactive
+              }}>
+                {/* Mode Label */}
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  letterSpacing: '0.5px',
+                  color: mode === 'add' ? colors.addMode : colors.editMode,
+                  textTransform: 'uppercase',
+                }}>
+                  <div style={{
+                    width: '6px', height: '6px', borderRadius: '50%',
+                    background: 'currentColor',
+                    boxShadow: `0 0 8px ${mode === 'add' ? colors.addMode : colors.editMode}`
+                  }} />
+                  {mode === 'add' ? 'Add to Codebase' : 'Edit Codebase'}
                 </div>
 
-                {/* Action Bar */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' }}>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    {/* Attach Button (Icon Only - Subtle) */}
-                    <label style={{
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      width: '32px', height: '32px', // Fixed square size
-                      background: 'rgba(255,255,255,0.03)',
-                      border: '1px solid rgba(255,255,255,0.08)',
-                      borderRadius: '8px',
-                      color: colors.textSecondary, // Subtle color
-                      cursor: 'pointer',
-                      transition: 'all 0.2s ease',
-                    }}
-                      onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.08)'}
-                      onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.03)'}
-                    >
-                      <Paperclip size={16} style={{ opacity: 0.7 }} />
-                      <input
-                        type="file"
-                        accept="image/*"
-                        multiple
-                        style={{ display: 'none' }}
-                        onChange={(e) => {
-                          const files = Array.from(e.target.files || []);
-                          files.forEach(file => handleImageUpload(file));
-                          e.target.value = '';
-                        }}
-                      />
-                    </label>
-
-                    {/* Model Selector (No Label, Consistent Height) */}
-                    <div style={{ height: '32px' }}>
-                      <Dropdown
-                        label=""
-                        value={model}
-                        options={MODELS}
-                        onChange={setModel}
-                        disabled={isProcessing}
-                      />
-                    </div>
-                  </div>
-
-                  {/* The Gem Button */}
-                  <div style={{ height: '36px' }}>
-                    <TitaniumButton
-                      onClick={sendCommand}
-                      disabled={!instruction.trim() || isProcessing}
-                      isLoading={isProcessing}
-                      mode={mode}
-                    >
-                      <span>{mode === 'add' ? 'Add it' : 'Edit it'}</span>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '2px', opacity: 0.8 }}>
-                        <Command size={12} strokeWidth={3} />
-                        <ArrowUp size={14} strokeWidth={3} />
-                      </div>
-                    </TitaniumButton>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Completed State Actions */}
-            {isComplete && (
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '10px' }}>
-                <button
-                  onClick={handleRevert}
-                  style={{
-                    background: 'rgba(255,255,255,0.05)',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    borderRadius: '8px',
-                    padding: '8px 16px',
+                {/* Context Tag (Pill Shape) */}
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '2px 10px',
+                  borderRadius: '999px', // Pill
+                  background: 'rgba(255,255,255,0.08)',
+                  // border: 'none', // Removed border
+                }}>
+                  <span style={{
+                    fontSize: '11px',
                     color: colors.textSecondary,
-                    fontSize: '12px',
-                    fontWeight: 500,
-                    cursor: 'pointer',
-                  }}
-                >
-                  Undo
-                </button>
+                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                  }}>
+                    page.tsx
+                  </span>
+                </div>
+              </div>
+
+              {/* Close Button */}
+              <div style={{ marginLeft: 'auto', pointerEvents: 'auto' }}>
                 <button
-                  onClick={handleKeep}
+                  onClick={() => setActive(false)}
                   style={{
-                    background: colors.success,
-                    border: 'none',
-                    borderRadius: '8px',
-                    padding: '8px 16px',
-                    color: '#000',
-                    fontSize: '12px',
-                    fontWeight: 600,
+                    width: '20px', height: '20px',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    color: colors.textSecondary,
+                    background: 'rgba(255,255,255,0.05)',
+                    border: '1px solid rgba(255,255,255,0.05)',
                     cursor: 'pointer',
-                    boxShadow: `0 0 15px ${colors.successSoft}`,
+                    padding: 0,
+                    borderRadius: '50%', // Circle
+                    transition: 'all 0.2s',
+                  }}
+                  onMouseEnter={e => {
+                    e.currentTarget.style.background = 'rgba(255,255,255,0.1)';
+                    e.currentTarget.style.color = colors.textPrimary;
+                  }}
+                  onMouseLeave={e => {
+                    e.currentTarget.style.background = 'rgba(255,255,255,0.05)';
+                    e.currentTarget.style.color = colors.textSecondary;
                   }}
                 >
-                  Accept
+                  <X size={12} />
                 </button>
               </div>
-            )}
-          </div>
+            </>
+          }
+          footer={
+            <>
+              {/* Left Controls: Attach & Model */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {/* Hidden File Input (Images only - use @ for code files) */}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  accept="image/*"
+                  onChange={handleFileSelect}
+                  style={{ display: 'none' }}
+                />
+                {/* Attach Button (Circle) */}
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  draggable={false}
+                  style={{
+                    width: '28px', height: '28px',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    background: 'rgba(255,255,255,0.03)', // Subtle fill for definition
+                    border: '1px solid rgba(255,255,255,0.05)', // Subtle border
+                    borderRadius: '50%', // Circle
+                    color: colors.textSecondary,
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                  }}
+                  onMouseEnter={e => {
+                    e.currentTarget.style.background = 'rgba(255,255,255,0.1)';
+                    e.currentTarget.style.color = colors.textPrimary;
+                    e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)';
+                  }}
+                  onMouseLeave={e => {
+                    e.currentTarget.style.background = 'rgba(255,255,255,0.03)';
+                    e.currentTarget.style.color = colors.textSecondary;
+                    e.currentTarget.style.borderColor = 'rgba(255,255,255,0.05)';
+                  }}
+                >
+                  <Paperclip size={14} strokeWidth={2} />
+                </button>
+
+                {/* Model Dropdown (Pill handled in component or wrapper) */}
+                <div style={{ height: '28px' }}>
+                  <Dropdown
+                    value={model}
+                    onChange={setModel}
+                    options={MODELS}
+                    label="" // No label
+                  />
+                </div>
+              </div>
+
+              {/* Right Control: Titanium Send Button */}
+              <div style={{ height: '28px' }}>
+                <TitaniumButton
+                  onClick={sendCommand}
+                  disabled={status === 'streaming' || !instruction.trim()}
+                  isLoading={status === 'streaming'}
+                  mode={mode}
+                >
+                  <span style={{ fontSize: '12px', fontWeight: 600 }}>
+                    {mode === 'add' ? 'Add' : 'Edit'}
+                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '2px', opacity: 0.6 }}>
+                    <Command size={10} strokeWidth={3} />
+                    <ArrowUp size={10} strokeWidth={3} />
+                  </div>
+                </TitaniumButton>
+              </div>
+            </>
+          }
+        >
+          {/* File References */}
+          {fileReferences.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', padding: '0 16px 8px 16px' }}>
+              {fileReferences.map((file) => (
+                <div key={file.path} style={{
+                  display: 'flex', alignItems: 'center', gap: '6px',
+                  padding: '4px 10px',
+                  background: 'rgba(255,255,255,0.08)',
+                  borderRadius: '999px', // Pill
+                  fontSize: '11px',
+                  color: colors.textSecondary,
+                  // border: 'none', // Removed border
+                }}>
+                  {file.isImage ? <ImageIcon size={12} /> : <FileText size={12} />}
+                  <span style={{ maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {file.name}
+                  </span>
+                  <button onClick={() => removeFileReference(file.path)} style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0 }}>
+                    <X size={10} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <style>{`
+            .titanium-textarea::placeholder {
+              color: rgba(255, 255, 255, 0.25) !important;
+            }
+          `}</style>
+          <textarea
+            ref={instructionInputRef}
+            className="titanium-textarea"
+            value={instruction}
+            onChange={(e) => {
+              setInstruction(e.target.value);
+              // Auto-resize
+              e.target.style.height = 'auto';
+              e.target.style.height = Math.min(e.target.scrollHeight, 400) + 'px';
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendCommand();
+              }
+            }}
+            placeholder="Describe your change... (Use @ to reference files, ⌘C to add more)"
+            style={{
+              width: '100%',
+              minHeight: '120px', // Increased height for "taller" feel
+              maxHeight: '400px',
+              background: 'transparent',
+              border: 'none',
+              outline: 'none',
+              color: colors.textPrimary,
+              fontSize: '15px',
+              lineHeight: '1.6',
+              padding: '12px 16px', // Internal padding for the text
+              resize: 'none',
+              fontFamily: 'inherit',
+            }}
+          />
         </TitaniumShell>
       )}
 

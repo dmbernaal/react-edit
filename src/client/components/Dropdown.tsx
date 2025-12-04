@@ -69,8 +69,8 @@ export const Dropdown = ({ value, options, onChange, label, disabled = false }: 
         disabled={disabled}
         style={{
           background: 'rgba(255,255,255,0.03)',
-          border: '1px solid rgba(255,255,255,0.08)',
-          borderRadius: '8px',
+          // border: '1px solid rgba(255,255,255,0.08)', // Removed border
+          borderRadius: '999px', // Pill shape
           padding: '0 12px',
           height: '100%',
           color: disabled ? colors.textMuted : colors.textSecondary,
