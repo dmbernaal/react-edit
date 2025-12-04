@@ -81,6 +81,10 @@ export const CursorOverlay = () => {
   const [fileSearchIndex, setFileSearchIndex] = useState(0);
   const [cursorPosition, setCursorPosition] = useState(0);
   const fileSearchDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Multi-select UI state
+  const [showTargetsDropdown, setShowTargetsDropdown] = useState(false);
+  const targetsPillRef = useRef<HTMLButtonElement>(null);
 
   // Persist settings
   useEffect(() => { setStoredValue('cursor-bridge-model', model); }, [model]);
@@ -383,6 +387,7 @@ export const CursorOverlay = () => {
       grabApi.activate();
       setInspectorActive(true);
       setActive(false);
+      setShowTargetsDropdown(false); // Close dropdown when re-activating inspector
     }
   };
 
@@ -469,6 +474,7 @@ export const CursorOverlay = () => {
     setStatus('streaming');
     setEvents([]);
     setCanRevert(false);
+    setShowTargetsDropdown(false); // Close dropdown when starting stream
     setShowPositionPicker(false); // Hide position picker when sending
 
     // For backwards compatibility, use first target for primary fields
@@ -892,24 +898,75 @@ export const CursorOverlay = () => {
                   {mode === 'add' ? 'Add to Codebase' : 'Edit Codebase'}
                 </div>
 
-                {/* Context Tag (Pill Shape) */}
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  padding: '2px 10px',
-                  borderRadius: '999px', // Pill
-                  background: 'rgba(255,255,255,0.08)',
-                  // border: 'none', // Removed border
-                }}>
-                  <span style={{
-                    fontSize: '11px',
-                    color: colors.textSecondary,
-                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                {/* Selected Elements Display */}
+                {targets.length > 0 && (
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    pointerEvents: 'auto',
                   }}>
-                    page.tsx
-                  </span>
-                </div>
+                    {/* Primary Target Pill - Clickable when multiple */}
+                    <button
+                      ref={targetsPillRef}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (targets.length > 1) {
+                          setShowTargetsDropdown(!showTargetsDropdown);
+                        }
+                      }}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        padding: '2px 8px',
+                        borderRadius: '999px',
+                        background: 'rgba(255,255,255,0.08)',
+                        border: 'none',
+                        cursor: targets.length > 1 ? 'pointer' : 'default',
+                        transition: 'all 0.15s',
+                      }}
+                      onMouseEnter={e => {
+                        if (targets.length > 1) {
+                          e.currentTarget.style.background = 'rgba(255,255,255,0.12)';
+                        }
+                      }}
+                      onMouseLeave={e => {
+                        e.currentTarget.style.background = 'rgba(255,255,255,0.08)';
+                      }}
+                    >
+                      <span style={{
+                        fontSize: '11px',
+                        color: colors.textSecondary,
+                        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                        maxWidth: '120px',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}>
+                        {targets[0].fileName.split('/').pop() || targets[0].fileName}
+                      </span>
+                      
+                      {/* Multi-select Badge (inline) */}
+                      {targets.length > 1 && (
+                        <span style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          padding: '1px 5px',
+                          marginLeft: '4px',
+                          borderRadius: '999px',
+                          background: mode === 'add' ? 'rgba(168, 85, 247, 0.25)' : 'rgba(52, 211, 153, 0.25)',
+                          fontSize: '9px',
+                          fontWeight: 700,
+                          color: mode === 'add' ? colors.addMode : colors.editMode,
+                        }}>
+                          +{targets.length - 1}
+                        </span>
+                      )}
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Close Button */}
@@ -1427,6 +1484,184 @@ export const CursorOverlay = () => {
               {fileSearchQuery ? `No files matching "${fileSearchQuery}"` : 'Type to search files...'}
             </div>
           )}
+        </div>,
+        document.body
+      )}
+
+      {/* Selected Elements Dropdown - Portal to escape overflow:hidden */}
+      {active && showTargetsDropdown && targets.length > 1 && typeof document !== 'undefined' && ReactDOM.createPortal(
+        <div 
+          style={{
+            position: 'fixed',
+            top: (() => {
+              if (!targetsPillRef.current) return 100;
+              const rect = targetsPillRef.current.getBoundingClientRect();
+              return rect.bottom + 8;
+            })(),
+            left: (() => {
+              if (!targetsPillRef.current) return 100;
+              const rect = targetsPillRef.current.getBoundingClientRect();
+              return rect.left;
+            })(),
+            minWidth: '260px',
+            background: colors.surface,
+            border: `1px solid ${colors.borderDefault}`,
+            borderRadius: '12px',
+            boxShadow: '0 12px 40px rgba(0,0,0,0.5)',
+            overflow: 'hidden',
+            zIndex: 1000000,
+          }}
+          onMouseLeave={() => setShowTargetsDropdown(false)}
+        >
+          {/* Header */}
+          <div style={{
+            padding: '10px 12px',
+            borderBottom: `1px solid ${colors.borderDefault}`,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+          }}>
+            <span style={{
+              fontSize: '10px',
+              fontWeight: 600,
+              letterSpacing: '0.5px',
+              color: colors.textTertiary,
+              textTransform: 'uppercase',
+            }}>
+              Selected Elements
+            </span>
+            <span style={{
+              fontSize: '10px',
+              color: colors.textTertiary,
+            }}>
+              {targets.length}/5
+            </span>
+          </div>
+          
+          {/* Elements List */}
+          <div style={{ padding: '6px' }}>
+            {targets.map((target, idx) => (
+              <div
+                key={`${target.fileName}-${target.lineNumber}-${idx}`}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '10px',
+                  padding: '8px 10px',
+                  borderRadius: '6px',
+                  background: idx === 0 ? 'rgba(255,255,255,0.05)' : 'transparent',
+                  marginBottom: '2px',
+                }}
+              >
+                {/* Element Number */}
+                <div style={{
+                  width: '24px',
+                  height: '24px',
+                  borderRadius: '5px',
+                  background: idx === 0 
+                    ? (mode === 'add' ? 'rgba(168, 85, 247, 0.15)' : 'rgba(52, 211, 153, 0.15)')
+                    : 'rgba(255,255,255,0.06)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '10px',
+                  fontWeight: 600,
+                  color: idx === 0 
+                    ? (mode === 'add' ? colors.addMode : colors.editMode)
+                    : colors.textTertiary,
+                }}>
+                  {idx + 1}
+                </div>
+                
+                {/* Element Info */}
+                <div style={{ flex: 1, overflow: 'hidden' }}>
+                  <div style={{
+                    fontSize: '12px',
+                    color: colors.textSecondary,
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}>
+                    &lt;{target.elementTag}&gt;
+                  </div>
+                  <div style={{
+                    fontSize: '10px',
+                    color: colors.textTertiary,
+                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}>
+                    {target.fileName.split('/').pop()}:{target.lineNumber}
+                  </div>
+                </div>
+                
+                {/* Remove Button (except for primary) */}
+                {idx > 0 && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setTargets(prev => prev.filter((_, i) => i !== idx));
+                      if (targets.length <= 2) setShowTargetsDropdown(false);
+                    }}
+                    style={{
+                      width: '20px',
+                      height: '20px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      background: 'transparent',
+                      border: 'none',
+                      borderRadius: '4px',
+                      color: colors.textTertiary,
+                      cursor: 'pointer',
+                      opacity: 0.6,
+                      transition: 'all 0.15s',
+                    }}
+                    onMouseEnter={e => {
+                      e.currentTarget.style.background = 'rgba(255,255,255,0.1)';
+                      e.currentTarget.style.opacity = '1';
+                    }}
+                    onMouseLeave={e => {
+                      e.currentTarget.style.background = 'transparent';
+                      e.currentTarget.style.opacity = '0.6';
+                    }}
+                  >
+                    <X size={10} />
+                  </button>
+                )}
+                
+                {/* Primary Badge */}
+                {idx === 0 && (
+                  <span style={{
+                    fontSize: '9px',
+                    fontWeight: 600,
+                    color: mode === 'add' ? colors.addMode : colors.editMode,
+                    letterSpacing: '0.3px',
+                  }}>
+                    PRIMARY
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+          
+          {/* Footer hint */}
+          <div style={{
+            padding: '8px 12px',
+            borderTop: `1px solid ${colors.borderDefault}`,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+          }}>
+            <Command size={10} style={{ color: colors.textTertiary }} />
+            <span style={{
+              fontSize: '10px',
+              color: colors.textTertiary,
+            }}>
+              ⌘C to add more elements
+            </span>
+          </div>
         </div>,
         document.body
       )}
