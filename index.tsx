@@ -1152,68 +1152,102 @@ export const CursorOverlay = () => {
             </>
           }
         >
-          {/* Image Attachments Only - Screenshots go here */}
+          {/* Image Attachments Only - Thumbnails Shelf */}
           {fileReferences.filter(f => f.isImage).length > 0 && (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', padding: '6px 16px 8px 16px' }}>
+            <div style={{ 
+              display: 'flex', 
+              flexWrap: 'wrap', 
+              gap: '8px', 
+              padding: '12px 16px 8px 16px',
+              borderBottom: `1px solid ${colors.borderSubtle}`, // Subtle shelf separator
+              marginBottom: '4px'
+            }}>
               {fileReferences.filter(f => f.isImage).map((file) => (
-                <div key={file.path} style={{
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  gap: '5px',
-                  padding: '3px 6px 3px 5px',
-                  background: 'rgba(168, 85, 247, 0.12)',
-                  borderRadius: '5px',
-                  color: '#C4B5FD',
-                  border: '1px solid rgba(168, 85, 247, 0.2)',
-                  transition: 'all 0.15s ease',
-                }}>
+                <div 
+                  key={file.path} 
+                  style={{
+                    position: 'relative',
+                  }}
+                  onMouseEnter={e => {
+                    const btn = e.currentTarget.querySelector('.delete-btn') as HTMLElement;
+                    if (btn) btn.style.opacity = '1';
+                  }}
+                  onMouseLeave={e => {
+                    const btn = e.currentTarget.querySelector('.delete-btn') as HTMLElement;
+                    if (btn) btn.style.opacity = '0';
+                  }}
+                >
+                  {/* Thumbnail */}
                   <div style={{
-                    width: '16px',
-                    height: '16px',
-                    borderRadius: '3px',
-                    background: 'rgba(168, 85, 247, 0.2)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
+                    width: '36px',
+                    height: '36px',
+                    borderRadius: '6px',
+                    background: colors.elevated,
+                    border: `1px solid ${colors.borderDefault}`,
+                    overflow: 'hidden',
+                    position: 'relative',
                   }}>
-                    <ImageIcon size={9} />
+                    {file.previewUrl ? (
+                      <img 
+                        src={file.previewUrl} 
+                        alt={file.name}
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                      />
+                    ) : (
+                      <div style={{ 
+                        width: '100%', 
+                        height: '100%', 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        justifyContent: 'center',
+                        color: colors.textTertiary 
+                      }}>
+                        <ImageIcon size={16} />
+                      </div>
+                    )}
+                    
+                    {/* Gradient Overlay for depth */}
+                    <div style={{
+                      position: 'absolute',
+                      inset: 0,
+                      background: 'linear-gradient(to bottom, rgba(0,0,0,0) 70%, rgba(0,0,0,0.2) 100%)',
+                      pointerEvents: 'none',
+                    }} />
                   </div>
-                  <span style={{ 
-                    maxWidth: '120px', 
-                    overflow: 'hidden', 
-                    textOverflow: 'ellipsis', 
-                    whiteSpace: 'nowrap',
-                    fontWeight: 500,
-                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-                    fontSize: '10px',
-                  }}>
-                    {file.name}
-                  </span>
+
+                  {/* Delete Overlay Button */}
                   <button 
+                    className="delete-btn"
                     onClick={() => removeFileReference(file.path)} 
                     style={{ 
-                      background: 'transparent', 
-                      border: 'none', 
-                      color: 'inherit', 
-                      cursor: 'pointer', 
-                      padding: '1px',
-                      borderRadius: '3px',
+                      position: 'absolute',
+                      top: '-6px',
+                      right: '-6px',
+                      width: '18px',
+                      height: '18px',
+                      background: colors.surface,
+                      border: `1px solid ${colors.borderDefault}`,
+                      borderRadius: '50%',
+                      color: colors.textSecondary,
+                      cursor: 'pointer',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      opacity: 0.5,
-                      transition: 'all 0.15s',
+                      opacity: 0, // Hidden by default
+                      transition: 'all 0.15s ease',
+                      zIndex: 10,
+                      boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
                     }}
                     onMouseEnter={e => {
-                      e.currentTarget.style.opacity = '1';
-                      e.currentTarget.style.background = 'rgba(255,255,255,0.1)';
+                      e.currentTarget.style.color = colors.error;
+                      e.currentTarget.style.borderColor = colors.errorSoft;
                     }}
                     onMouseLeave={e => {
-                      e.currentTarget.style.opacity = '0.5';
-                      e.currentTarget.style.background = 'transparent';
+                      e.currentTarget.style.color = colors.textSecondary;
+                      e.currentTarget.style.borderColor = colors.borderDefault;
                     }}
                   >
-                    <X size={8} />
+                    <X size={10} />
                   </button>
                 </div>
               ))}
@@ -1233,11 +1267,10 @@ export const CursorOverlay = () => {
               display: inline-flex;
               align-items: center;
               gap: 4px;
-              padding: 2px 6px 2px 4px;
-              background: rgba(59, 130, 246, 0.18);
-              border: 1px solid rgba(59, 130, 246, 0.3);
-              border-radius: 5px;
-              color: #93C5FD;
+              padding: 2px 8px 2px 6px;
+              background: rgba(255, 255, 255, 0.08);
+              border-radius: 12px; /* Pill shape */
+              color: #E5E7EB;
               font-size: 13px;
               font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
               font-weight: 500;
@@ -1245,20 +1278,24 @@ export const CursorOverlay = () => {
               margin: 0 2px;
               line-height: 1.4;
               user-select: none;
+              transition: all 0.15s ease;
+            }
+            .file-mention:hover {
+              background: rgba(255, 255, 255, 0.12);
+              color: #FFFFFF;
             }
             .file-mention-icon {
-              width: 16px;
-              height: 16px;
+              width: 14px;
+              height: 14px;
               display: inline-flex;
               align-items: center;
               justify-content: center;
-              background: rgba(59, 130, 246, 0.25);
-              border-radius: 3px;
+              color: rgba(255, 255, 255, 0.5); /* Monochrome */
               flex-shrink: 0;
             }
             .file-mention-icon svg {
-              width: 10px;
-              height: 10px;
+              width: 12px;
+              height: 12px;
             }
           `}</style>
           
