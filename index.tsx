@@ -16,7 +16,7 @@ import { DEBUG, log, API_BASE, MODELS, PROMPT_TEMPLATES, colors } from './src/cl
 import { cleanFilePath, inferFileFromRoute, getStoredValue, setStoredValue } from './src/client/utils';
 import { Dropdown, Toggle, StreamStep } from './src/client/components';
 import { TitaniumShell, TitaniumButton } from './src/client/components/Titanium';
-import { ArrowUp, Paperclip, Sparkles, X, Image as ImageIcon, FileText, Zap, Command, Plus } from 'lucide-react';
+import { ArrowUp, Paperclip, Sparkles, X, Image as ImageIcon, FileText, Zap, Command, Plus, Settings, Check, User, CreditCard, Wand2, Lock } from 'lucide-react';
 
 // ============================================================================
 // MAIN COMPONENT
@@ -85,6 +85,9 @@ export const CursorOverlay = () => {
   // Multi-select UI state
   const [showTargetsDropdown, setShowTargetsDropdown] = useState(false);
   const targetsPillRef = useRef<HTMLButtonElement>(null);
+  
+  // Settings modal state
+  const [showSettings, setShowSettings] = useState(false);
 
   // Persist settings
   useEffect(() => { setStoredValue('cursor-bridge-model', model); }, [model]);
@@ -426,7 +429,9 @@ export const CursorOverlay = () => {
 
       // Escape key
       if (e.key === 'Escape') {
-        if (showPositionPicker) {
+        if (showSettings) {
+          setShowSettings(false);
+        } else if (showPositionPicker) {
           setShowPositionPicker(false);
           setMode('edit');
         } else if (showPromptEditor) {
@@ -463,7 +468,7 @@ export const CursorOverlay = () => {
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [active, showPromptEditor, showPositionPicker, status, grabApi, inspectorActive]);
+  }, [active, showSettings, showPromptEditor, showPositionPicker, status, grabApi, inspectorActive]);
 
   // Send command with streaming
   const sendCommand = async () => {
@@ -869,6 +874,8 @@ export const CursorOverlay = () => {
             width: '600px',
             zIndex: 999999,
             fontFamily: 'Inter, system-ui, sans-serif',
+            transform: showSettings ? 'translateX(-280px)' : 'none',
+            transition: 'transform 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
           }}
           header={
             <>
@@ -1084,6 +1091,34 @@ export const CursorOverlay = () => {
                   }}
                 >
                   <Plus size={14} strokeWidth={2} />
+                </button>
+
+                {/* Settings Button (Cogwheel) */}
+                <button
+                  onClick={() => setShowSettings(true)}
+                  draggable={false}
+                  style={{
+                    width: '28px', height: '28px',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    background: 'rgba(255,255,255,0.03)',
+                    border: '1px solid rgba(255,255,255,0.05)',
+                    borderRadius: '50%',
+                    color: colors.textSecondary,
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                  }}
+                  onMouseEnter={e => {
+                    e.currentTarget.style.background = 'rgba(255,255,255,0.1)';
+                    e.currentTarget.style.color = colors.textPrimary;
+                    e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)';
+                  }}
+                  onMouseLeave={e => {
+                    e.currentTarget.style.background = 'rgba(255,255,255,0.03)';
+                    e.currentTarget.style.color = colors.textSecondary;
+                    e.currentTarget.style.borderColor = 'rgba(255,255,255,0.05)';
+                  }}
+                >
+                  <Settings size={14} strokeWidth={2} />
                 </button>
 
                 {/* Model Dropdown (Pill handled in component or wrapper) */}
@@ -1734,6 +1769,569 @@ export const CursorOverlay = () => {
               <button onClick={saveCustomPrompt} style={{ background: colors.textPrimary, border: 'none', borderRadius: '8px', padding: '8px 16px', color: colors.void, fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>Save</button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Settings Modal - Central Control Panel */}
+      {showSettings && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 100000,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: 'rgba(0,0,0,0.6)', // Lighter backdrop to see context
+          backdropFilter: 'blur(4px)',
+          transition: 'all 0.3s ease',
+        }} onClick={() => setShowSettings(false)}>
+          
+          {/* Settings Panel - Positioned to the right */}
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              width: '480px',
+              maxHeight: '85vh',
+              display: 'flex',
+              flexDirection: 'column',
+              transform: 'translateX(310px)', // Offset to the right
+              animation: 'slideInRight 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards',
+              position: 'relative', // For absolute positioning context if needed
+            }}
+          >
+            {/* Mission Control Label - Contextual Anchor */}
+            <div style={{
+              marginBottom: '16px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              opacity: 0,
+              animation: 'fadeIn 0.4s ease-out 0.1s forwards',
+            }}>
+              <div style={{
+                fontSize: '10px',
+                fontWeight: 700,
+                letterSpacing: '3px',
+                color: colors.textTertiary,
+                textTransform: 'uppercase',
+                background: 'rgba(255,255,255,0.1)',
+                padding: '6px 12px',
+                borderRadius: '999px',
+                border: `1px solid ${colors.borderSubtle}`,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                backdropFilter: 'blur(4px)',
+              }}>
+                <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: colors.success, boxShadow: `0 0 8px ${colors.success}` }} />
+                Mission Control
+              </div>
+            </div>
+
+            {/* Main Modal Card */}
+            <div style={{
+              background: colors.surface,
+              border: `1px solid ${colors.borderDefault}`,
+              borderRadius: '16px',
+              boxShadow: '0 40px 100px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.05)',
+              overflow: 'hidden',
+              display: 'flex',
+              flexDirection: 'column',
+              flex: 1, // Fill available height in flex container
+            }}>
+            {/* Header */}
+            <div style={{
+              padding: '20px 24px',
+              borderBottom: `1px solid ${colors.borderSubtle}`,
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{
+                  width: '32px',
+                  height: '32px',
+                  borderRadius: '8px',
+                  background: 'rgba(111, 59, 245, 0.15)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}>
+                  <Settings size={16} style={{ color: colors.brand }} />
+                </div>
+                <div>
+                  <div style={{ color: colors.textPrimary, fontSize: '15px', fontWeight: 600 }}>Settings</div>
+                  <div style={{ color: colors.textTertiary, fontSize: '11px', marginTop: '2px' }}>Configure your agent</div>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowSettings(false)} 
+                style={{ 
+                  width: '28px',
+                  height: '28px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  background: 'rgba(255,255,255,0.05)', 
+                  border: 'none', 
+                  borderRadius: '8px',
+                  color: colors.textTertiary, 
+                  cursor: 'pointer',
+                  transition: 'all 0.15s',
+                }}
+                onMouseEnter={e => {
+                  e.currentTarget.style.background = 'rgba(255,255,255,0.1)';
+                  e.currentTarget.style.color = colors.textSecondary;
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.background = 'rgba(255,255,255,0.05)';
+                  e.currentTarget.style.color = colors.textTertiary;
+                }}
+              >
+                <X size={14} />
+              </button>
+            </div>
+
+            {/* Scrollable Content */}
+            <div style={{ 
+              flex: 1, 
+              overflowY: 'auto', 
+              padding: '20px 24px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '24px',
+            }}>
+              
+              {/* Section: Prompt Template */}
+              <div>
+                <div style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  gap: '8px', 
+                  marginBottom: '12px' 
+                }}>
+                  <Wand2 size={14} style={{ color: colors.textTertiary }} />
+                  <span style={{ 
+                    fontSize: '11px', 
+                    fontWeight: 600, 
+                    letterSpacing: '0.5px', 
+                    color: colors.textTertiary, 
+                    textTransform: 'uppercase' 
+                  }}>
+                    Prompt Template
+                  </span>
+                </div>
+                <div style={{ 
+                  display: 'grid', 
+                  gridTemplateColumns: 'repeat(2, 1fr)', 
+                  gap: '8px' 
+                }}>
+                  {Object.values(PROMPT_TEMPLATES).filter(t => t.id !== 'custom').map((template) => (
+                    <button
+                      key={template.id}
+                      onClick={() => setPromptTemplate(template.id)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '10px',
+                        padding: '12px 14px',
+                        background: promptTemplate === template.id 
+                          ? 'rgba(111, 59, 245, 0.12)' 
+                          : 'rgba(255,255,255,0.03)',
+                        border: `1px solid ${promptTemplate === template.id 
+                          ? 'rgba(111, 59, 245, 0.3)' 
+                          : 'rgba(255,255,255,0.06)'}`,
+                        borderRadius: '10px',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s',
+                        textAlign: 'left',
+                      }}
+                      onMouseEnter={e => {
+                        if (promptTemplate !== template.id) {
+                          e.currentTarget.style.background = 'rgba(255,255,255,0.06)';
+                          e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)';
+                        }
+                      }}
+                      onMouseLeave={e => {
+                        if (promptTemplate !== template.id) {
+                          e.currentTarget.style.background = 'rgba(255,255,255,0.03)';
+                          e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)';
+                        }
+                      }}
+                    >
+                      <div style={{
+                        width: '18px',
+                        height: '18px',
+                        borderRadius: '50%',
+                        border: `2px solid ${promptTemplate === template.id ? colors.brand : 'rgba(255,255,255,0.2)'}`,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        flexShrink: 0,
+                        transition: 'all 0.15s',
+                      }}>
+                        {promptTemplate === template.id && (
+                          <div style={{
+                            width: '8px',
+                            height: '8px',
+                            borderRadius: '50%',
+                            background: colors.brand,
+                          }} />
+                        )}
+                      </div>
+                      <div>
+                        <div style={{ 
+                          color: promptTemplate === template.id ? colors.textPrimary : colors.textSecondary, 
+                          fontSize: '13px', 
+                          fontWeight: 500 
+                        }}>
+                          {template.name}
+                        </div>
+                        <div style={{ 
+                          color: colors.textTertiary, 
+                          fontSize: '11px', 
+                          marginTop: '2px' 
+                        }}>
+                          {template.desc}
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Section: Custom System Prompt */}
+              <div>
+                <div style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'space-between',
+                  marginBottom: '12px' 
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <FileText size={14} style={{ color: colors.textTertiary }} />
+                    <span style={{ 
+                      fontSize: '11px', 
+                      fontWeight: 600, 
+                      letterSpacing: '0.5px', 
+                      color: colors.textTertiary, 
+                      textTransform: 'uppercase' 
+                    }}>
+                      Custom System Prompt
+                    </span>
+                  </div>
+                  {promptTemplate === 'custom' && (
+                    <span style={{
+                      fontSize: '9px',
+                      fontWeight: 600,
+                      padding: '3px 8px',
+                      borderRadius: '999px',
+                      background: 'rgba(111, 59, 245, 0.15)',
+                      color: colors.brand,
+                      letterSpacing: '0.3px',
+                    }}>
+                      ACTIVE
+                    </span>
+                  )}
+                </div>
+                <div style={{
+                  background: 'rgba(255,255,255,0.02)',
+                  border: `1px solid ${colors.borderDefault}`,
+                  borderRadius: '10px',
+                  overflow: 'hidden',
+                }}>
+                  <div style={{ 
+                    padding: '10px 12px', 
+                    borderBottom: `1px solid ${colors.borderSubtle}`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                  }}>
+                    <span style={{ 
+                      fontSize: '10px', 
+                      color: colors.textTertiary,
+                      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                    }}>
+                      Variables: {'${filePath}'} {'${component}'} {'${lineNumber}'} {'${instruction}'}
+                    </span>
+                  </div>
+                  <textarea
+                    value={customPrompt}
+                    onChange={e => setCustomPrompt(e.target.value)}
+                    placeholder="Enter your custom system prompt here..."
+                    style={{
+                      width: '100%',
+                      height: '120px',
+                      background: 'transparent',
+                      border: 'none',
+                      padding: '12px',
+                      color: colors.textPrimary,
+                      fontSize: '12px',
+                      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                      lineHeight: 1.6,
+                      resize: 'none',
+                      outline: 'none',
+                    }}
+                  />
+                </div>
+                <button
+                  onClick={() => setPromptTemplate('custom')}
+                  disabled={!customPrompt.trim()}
+                  style={{
+                    marginTop: '10px',
+                    padding: '8px 14px',
+                    background: promptTemplate === 'custom' 
+                      ? 'rgba(52, 211, 153, 0.15)' 
+                      : customPrompt.trim() 
+                        ? 'rgba(111, 59, 245, 0.12)' 
+                        : 'rgba(255,255,255,0.03)',
+                    border: `1px solid ${promptTemplate === 'custom' 
+                      ? 'rgba(52, 211, 153, 0.3)' 
+                      : customPrompt.trim() 
+                        ? 'rgba(111, 59, 245, 0.2)' 
+                        : 'rgba(255,255,255,0.06)'}`,
+                    borderRadius: '8px',
+                    color: promptTemplate === 'custom' 
+                      ? colors.success 
+                      : customPrompt.trim() 
+                        ? colors.brand 
+                        : colors.textTertiary,
+                    fontSize: '12px',
+                    fontWeight: 500,
+                    cursor: customPrompt.trim() ? 'pointer' : 'not-allowed',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    transition: 'all 0.15s',
+                  }}
+                >
+                  {promptTemplate === 'custom' ? (
+                    <>
+                      <Check size={12} />
+                      Using Custom Prompt
+                    </>
+                  ) : (
+                    'Use Custom Prompt'
+                  )}
+                </button>
+              </div>
+
+              {/* Divider */}
+              <div style={{ 
+                height: '1px', 
+                background: colors.borderSubtle,
+                margin: '4px 0',
+              }} />
+
+              {/* Section: Account (Coming Soon) */}
+              <div style={{ opacity: 0.5 }}>
+                <div style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  gap: '8px', 
+                  marginBottom: '12px' 
+                }}>
+                  <User size={14} style={{ color: colors.textTertiary }} />
+                  <span style={{ 
+                    fontSize: '11px', 
+                    fontWeight: 600, 
+                    letterSpacing: '0.5px', 
+                    color: colors.textTertiary, 
+                    textTransform: 'uppercase' 
+                  }}>
+                    Account
+                  </span>
+                  <span style={{
+                    fontSize: '9px',
+                    fontWeight: 600,
+                    padding: '2px 6px',
+                    borderRadius: '4px',
+                    background: 'rgba(255,255,255,0.06)',
+                    color: colors.textTertiary,
+                    marginLeft: 'auto',
+                  }}>
+                    COMING SOON
+                  </span>
+                </div>
+                <div style={{
+                  padding: '16px',
+                  background: 'rgba(255,255,255,0.02)',
+                  border: `1px solid ${colors.borderSubtle}`,
+                  borderRadius: '10px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                }}>
+                  <div style={{
+                    width: '40px',
+                    height: '40px',
+                    borderRadius: '10px',
+                    background: 'rgba(255,255,255,0.05)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}>
+                    <Lock size={18} style={{ color: colors.textTertiary }} />
+                  </div>
+                  <div>
+                    <div style={{ color: colors.textSecondary, fontSize: '13px', fontWeight: 500 }}>
+                      Sign in to sync settings
+                    </div>
+                    <div style={{ color: colors.textTertiary, fontSize: '11px', marginTop: '2px' }}>
+                      Access your prompts across devices
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Section: Subscription (Coming Soon) */}
+              <div style={{ opacity: 0.5 }}>
+                <div style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  gap: '8px', 
+                  marginBottom: '12px' 
+                }}>
+                  <CreditCard size={14} style={{ color: colors.textTertiary }} />
+                  <span style={{ 
+                    fontSize: '11px', 
+                    fontWeight: 600, 
+                    letterSpacing: '0.5px', 
+                    color: colors.textTertiary, 
+                    textTransform: 'uppercase' 
+                  }}>
+                    Subscription
+                  </span>
+                  <span style={{
+                    fontSize: '9px',
+                    fontWeight: 600,
+                    padding: '2px 6px',
+                    borderRadius: '4px',
+                    background: 'rgba(255,255,255,0.06)',
+                    color: colors.textTertiary,
+                    marginLeft: 'auto',
+                  }}>
+                    COMING SOON
+                  </span>
+                </div>
+                <div style={{
+                  padding: '16px',
+                  background: 'rgba(255,255,255,0.02)',
+                  border: `1px solid ${colors.borderSubtle}`,
+                  borderRadius: '10px',
+                }}>
+                  <div style={{ 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'space-between',
+                    marginBottom: '12px',
+                  }}>
+                    <div>
+                      <div style={{ color: colors.textSecondary, fontSize: '13px', fontWeight: 500 }}>
+                        Free Plan
+                      </div>
+                      <div style={{ color: colors.textTertiary, fontSize: '11px', marginTop: '2px' }}>
+                        Basic features included
+                      </div>
+                    </div>
+                    <div style={{
+                      padding: '4px 10px',
+                      borderRadius: '999px',
+                      background: 'rgba(52, 211, 153, 0.1)',
+                      border: '1px solid rgba(52, 211, 153, 0.2)',
+                      color: colors.success,
+                      fontSize: '10px',
+                      fontWeight: 600,
+                    }}>
+                      CURRENT
+                    </div>
+                  </div>
+                  <button
+                    disabled
+                    style={{
+                      width: '100%',
+                      padding: '10px',
+                      background: 'rgba(111, 59, 245, 0.08)',
+                      border: `1px solid rgba(111, 59, 245, 0.15)`,
+                      borderRadius: '8px',
+                      color: colors.brand,
+                      fontSize: '12px',
+                      fontWeight: 500,
+                      cursor: 'not-allowed',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '6px',
+                    }}
+                  >
+                    <Sparkles size={12} />
+                    Upgrade to Pro
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div style={{
+              padding: '16px 24px',
+              borderTop: `1px solid ${colors.borderSubtle}`,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'flex-end',
+            }}>
+              <button
+                onClick={() => setShowSettings(false)}
+                style={{
+                  padding: '8px 16px',
+                  background: colors.textPrimary,
+                  border: 'none',
+                  borderRadius: '8px',
+                  color: colors.void,
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  transition: 'all 0.15s',
+                }}
+                onMouseEnter={e => {
+                  e.currentTarget.style.opacity = '0.9';
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.opacity = '1';
+                }}
+              >
+                Done
+              </button>
+            </div>
+          </div> {/* End Main Modal Card */}
+        </div> {/* End Wrapper */}
+
+          {/* Version Number - Bottom Right */}
+          <div style={{
+            position: 'absolute',
+            bottom: '40px',
+            right: '40px',
+            animation: 'fadeIn 0.4s ease-out 0.1s forwards',
+            opacity: 0,
+          }}>
+             <div style={{
+              fontSize: '10px',
+              color: colors.textMuted,
+              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+            }}>
+              Cursor Bridge v2.0
+            </div>
+          </div>
+
+          <style>{`
+            @keyframes slideInRight {
+              from { opacity: 0; transform: translateX(340px); }
+              to { opacity: 1; transform: translateX(310px); }
+            }
+            @keyframes fadeIn {
+              from { opacity: 0; transform: translate(-50%, -10px); }
+              to { opacity: 1; transform: translate(-50%, 0); }
+            }
+          `}</style>
         </div>
       )}
 
