@@ -1,5 +1,6 @@
 "use client";
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import ReactDOM from 'react-dom';
 import { init, getStack, getFileName } from 'react-grab/core';
 
 // Modular imports
@@ -15,7 +16,7 @@ import { DEBUG, log, API_BASE, MODELS, PROMPT_TEMPLATES, colors } from './src/cl
 import { cleanFilePath, inferFileFromRoute, getStoredValue, setStoredValue } from './src/client/utils';
 import { Dropdown, Toggle, StreamStep } from './src/client/components';
 import { TitaniumShell, TitaniumButton } from './src/client/components/Titanium';
-import { ArrowUp, Paperclip, Sparkles, X, Image as ImageIcon, FileText, Zap, Command } from 'lucide-react';
+import { ArrowUp, Paperclip, Sparkles, X, Image as ImageIcon, FileText, Zap, Command, Plus } from 'lucide-react';
 
 // ============================================================================
 // MAIN COMPONENT
@@ -44,7 +45,7 @@ export const CursorOverlay = () => {
   const [canRevert, setCanRevert] = useState(false);
   const [filesChanged, setFilesChanged] = useState<{ path: string; lines: number; isNew?: boolean }[]>([]);
   const eventsContainerRef = useRef<HTMLDivElement>(null);
-  const instructionInputRef = useRef<HTMLTextAreaElement>(null);
+  const instructionInputRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Revision history - tracks all edits in the current revision chain
@@ -199,33 +200,53 @@ export const CursorOverlay = () => {
     }
   };
 
-  const selectFileReference = (file: FileSearchResult) => {
-    const textBeforeCursor = instruction.slice(0, cursorPosition);
-    const textAfterCursor = instruction.slice(cursorPosition);
-    const atMatch = textBeforeCursor.match(/@([^\s@]*)$/);
-
+  // Insert styled file mention into contentEditable
+  const insertFileMention = (file: FileSearchResult) => {
+    const el = instructionInputRef.current;
+    if (!el) return;
+    
+    // Get current HTML and find the @query to replace
+    const existingHTML = el.innerHTML;
+    const currentText = el.innerText || '';
+    const atMatch = currentText.match(/@([^\s@]*)$/);
+    
+    // Create the mention HTML
+    const mentionHTML = `<span class="file-mention" contenteditable="false" data-path="${file.path}"><span class="file-mention-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg></span>${file.name}</span>`;
+    
     if (atMatch) {
-      const beforeAt = textBeforeCursor.slice(0, atMatch.index);
-      setInstruction(beforeAt + '@' + file.path + ' ' + textAfterCursor);
-      if (!fileReferences.some(f => f.path === file.path)) {
-        setFileReferences(prev => [...prev, { path: file.path, name: file.name, isImage: file.isImage }]);
+      const queryText = atMatch[0]; // e.g. "@des"
+      const lastIndex = existingHTML.lastIndexOf(queryText);
+      
+      if (lastIndex !== -1) {
+        el.innerHTML = existingHTML.slice(0, lastIndex) + mentionHTML + '&nbsp;';
+      } else {
+        // Fallback: replace at end
+        el.innerHTML = existingHTML.replace(/@[^\s@]*$/, '') + mentionHTML + '&nbsp;';
       }
+    } else {
+      // No @ found, just append
+      el.innerHTML = existingHTML + mentionHTML + '&nbsp;';
     }
+    
+    // Move cursor to end
+    const range = document.createRange();
+    const sel = window.getSelection();
+    range.selectNodeContents(el);
+    range.collapse(false);
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+    el.focus();
+    
+    // Update instruction state
+    setInstruction(el.innerText || '');
+    
+    // Add to file references
+    if (!fileReferences.some(f => f.path === file.path)) {
+      setFileReferences(prev => [...prev, { path: file.path, name: file.name, isImage: file.isImage }]);
+    }
+    
     setShowFileSearch(false);
     setFileSearchResults([]);
-    instructionInputRef.current?.focus();
-  };
-
-  const handleInstructionKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (showFileSearch && fileSearchResults.length > 0) {
-      if (e.key === 'ArrowDown') { e.preventDefault(); setFileSearchIndex(prev => Math.min(prev + 1, fileSearchResults.length - 1)); }
-      else if (e.key === 'ArrowUp') { e.preventDefault(); setFileSearchIndex(prev => Math.max(prev - 1, 0)); }
-      else if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); selectFileReference(fileSearchResults[fileSearchIndex]); }
-      else if (e.key === 'Escape') { e.preventDefault(); setShowFileSearch(false); setFileSearchResults([]); }
-    } else if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendCommand();
-    }
   };
 
   const handleImageUpload = async (file: File) => {
@@ -961,6 +982,53 @@ export const CursorOverlay = () => {
                   <Paperclip size={14} strokeWidth={2} />
                 </button>
 
+                {/* Add File Reference Button (+) - Triggers @ search */}
+                <button
+                  onClick={() => {
+                    const el = instructionInputRef.current;
+                    if (el) {
+                      el.focus();
+                      // Append @ at the end
+                      const currentHTML = el.innerHTML;
+                      el.innerHTML = currentHTML + '@';
+                      // Move cursor to end
+                      const range = document.createRange();
+                      const sel = window.getSelection();
+                      range.selectNodeContents(el);
+                      range.collapse(false);
+                      sel?.removeAllRanges();
+                      sel?.addRange(range);
+                      // Trigger file search
+                      setShowFileSearch(true);
+                      setFileSearchQuery('');
+                      searchFiles('');
+                    }
+                  }}
+                  draggable={false}
+                  style={{
+                    width: '28px', height: '28px',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    background: 'rgba(255,255,255,0.03)',
+                    border: '1px solid rgba(255,255,255,0.05)',
+                    borderRadius: '50%',
+                    color: colors.textSecondary,
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                  }}
+                  onMouseEnter={e => {
+                    e.currentTarget.style.background = 'rgba(255,255,255,0.1)';
+                    e.currentTarget.style.color = colors.textPrimary;
+                    e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)';
+                  }}
+                  onMouseLeave={e => {
+                    e.currentTarget.style.background = 'rgba(255,255,255,0.03)';
+                    e.currentTarget.style.color = colors.textSecondary;
+                    e.currentTarget.style.borderColor = 'rgba(255,255,255,0.05)';
+                  }}
+                >
+                  <Plus size={14} strokeWidth={2} />
+                </button>
+
                 {/* Model Dropdown (Pill handled in component or wrapper) */}
                 <div style={{ height: '28px' }}>
                   <Dropdown
@@ -992,25 +1060,68 @@ export const CursorOverlay = () => {
             </>
           }
         >
-          {/* File References */}
-          {fileReferences.length > 0 && (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', padding: '0 16px 8px 16px' }}>
-              {fileReferences.map((file) => (
+          {/* Image Attachments Only - Screenshots go here */}
+          {fileReferences.filter(f => f.isImage).length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', padding: '6px 16px 8px 16px' }}>
+              {fileReferences.filter(f => f.isImage).map((file) => (
                 <div key={file.path} style={{
-                  display: 'flex', alignItems: 'center', gap: '6px',
-                  padding: '4px 10px',
-                  background: 'rgba(255,255,255,0.08)',
-                  borderRadius: '999px', // Pill
-                  fontSize: '11px',
-                  color: colors.textSecondary,
-                  // border: 'none', // Removed border
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  gap: '5px',
+                  padding: '3px 6px 3px 5px',
+                  background: 'rgba(168, 85, 247, 0.12)',
+                  borderRadius: '5px',
+                  color: '#C4B5FD',
+                  border: '1px solid rgba(168, 85, 247, 0.2)',
+                  transition: 'all 0.15s ease',
                 }}>
-                  {file.isImage ? <ImageIcon size={12} /> : <FileText size={12} />}
-                  <span style={{ maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <div style={{
+                    width: '16px',
+                    height: '16px',
+                    borderRadius: '3px',
+                    background: 'rgba(168, 85, 247, 0.2)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}>
+                    <ImageIcon size={9} />
+                  </div>
+                  <span style={{ 
+                    maxWidth: '120px', 
+                    overflow: 'hidden', 
+                    textOverflow: 'ellipsis', 
+                    whiteSpace: 'nowrap',
+                    fontWeight: 500,
+                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                    fontSize: '10px',
+                  }}>
                     {file.name}
                   </span>
-                  <button onClick={() => removeFileReference(file.path)} style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0 }}>
-                    <X size={10} />
+                  <button 
+                    onClick={() => removeFileReference(file.path)} 
+                    style={{ 
+                      background: 'transparent', 
+                      border: 'none', 
+                      color: 'inherit', 
+                      cursor: 'pointer', 
+                      padding: '1px',
+                      borderRadius: '3px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      opacity: 0.5,
+                      transition: 'all 0.15s',
+                    }}
+                    onMouseEnter={e => {
+                      e.currentTarget.style.opacity = '1';
+                      e.currentTarget.style.background = 'rgba(255,255,255,0.1)';
+                    }}
+                    onMouseLeave={e => {
+                      e.currentTarget.style.opacity = '0.5';
+                      e.currentTarget.style.background = 'transparent';
+                    }}
+                  >
+                    <X size={8} />
                   </button>
                 </div>
               ))}
@@ -1018,30 +1129,123 @@ export const CursorOverlay = () => {
           )}
 
           <style>{`
-            .titanium-textarea::placeholder {
-              color: rgba(255, 255, 255, 0.25) !important;
+            .titanium-input:empty::before {
+              content: attr(data-placeholder);
+              color: rgba(255, 255, 255, 0.25);
+              pointer-events: none;
+            }
+            .titanium-input:focus {
+              outline: none;
+            }
+            .file-mention {
+              display: inline-flex;
+              align-items: center;
+              gap: 4px;
+              padding: 2px 6px 2px 4px;
+              background: rgba(59, 130, 246, 0.18);
+              border: 1px solid rgba(59, 130, 246, 0.3);
+              border-radius: 5px;
+              color: #93C5FD;
+              font-size: 13px;
+              font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+              font-weight: 500;
+              vertical-align: middle;
+              margin: 0 2px;
+              line-height: 1.4;
+              user-select: none;
+            }
+            .file-mention-icon {
+              width: 16px;
+              height: 16px;
+              display: inline-flex;
+              align-items: center;
+              justify-content: center;
+              background: rgba(59, 130, 246, 0.25);
+              border-radius: 3px;
+              flex-shrink: 0;
+            }
+            .file-mention-icon svg {
+              width: 10px;
+              height: 10px;
             }
           `}</style>
-          <textarea
+          
+          {/* Rich Text Input - contentEditable for styled @ mentions */}
+          <div
             ref={instructionInputRef}
-            className="titanium-textarea"
-            value={instruction}
-            onChange={(e) => {
-              setInstruction(e.target.value);
-              // Auto-resize
-              e.target.style.height = 'auto';
-              e.target.style.height = Math.min(e.target.scrollHeight, 400) + 'px';
+            className="titanium-input"
+            contentEditable
+            suppressContentEditableWarning
+            data-placeholder="Describe your change... (Use @ to reference files, ⌘C to add more)"
+            onInput={(e) => {
+              const target = e.currentTarget;
+              setInstruction(target.innerText || '');
+              
+              // Detect @ pattern for file search
+              const selection = window.getSelection();
+              if (selection && selection.rangeCount > 0) {
+                const range = selection.getRangeAt(0);
+                const textNode = range.startContainer;
+                if (textNode.nodeType === Node.TEXT_NODE) {
+                  const textContent = textNode.textContent || '';
+                  const cursorPos = range.startOffset;
+                  const textBeforeCursor = textContent.slice(0, cursorPos);
+                  const atMatch = textBeforeCursor.match(/@([^\s@]*)$/);
+                  
+                  if (atMatch) {
+                    const query = atMatch[1];
+                    setFileSearchQuery(query);
+                    setShowFileSearch(true);
+                    if (fileSearchDebounceRef.current) clearTimeout(fileSearchDebounceRef.current);
+                    fileSearchDebounceRef.current = setTimeout(() => searchFiles(query), 150);
+                  } else {
+                    setShowFileSearch(false);
+                    setFileSearchResults([]);
+                  }
+                } else {
+                  // Cursor might be in an element, not text - check parent
+                  const text = target.innerText || '';
+                  const atMatch = text.match(/@([^\s@]*)$/);
+                  if (atMatch) {
+                    const query = atMatch[1];
+                    setFileSearchQuery(query);
+                    setShowFileSearch(true);
+                    if (fileSearchDebounceRef.current) clearTimeout(fileSearchDebounceRef.current);
+                    fileSearchDebounceRef.current = setTimeout(() => searchFiles(query), 150);
+                  } else {
+                    setShowFileSearch(false);
+                    setFileSearchResults([]);
+                  }
+                }
+              }
             }}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
+              if (showFileSearch && fileSearchResults.length > 0) {
+                if (e.key === 'ArrowDown') { 
+                  e.preventDefault(); 
+                  setFileSearchIndex(prev => Math.min(prev + 1, fileSearchResults.length - 1)); 
+                }
+                else if (e.key === 'ArrowUp') { 
+                  e.preventDefault(); 
+                  setFileSearchIndex(prev => Math.max(prev - 1, 0)); 
+                }
+                else if (e.key === 'Enter' || e.key === 'Tab') { 
+                  e.preventDefault();
+                  insertFileMention(fileSearchResults[fileSearchIndex]);
+                }
+                else if (e.key === 'Escape') { 
+                  e.preventDefault(); 
+                  setShowFileSearch(false); 
+                  setFileSearchResults([]); 
+                }
+              } else if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 sendCommand();
               }
             }}
-            placeholder="Describe your change... (Use @ to reference files, ⌘C to add more)"
             style={{
               width: '100%',
-              minHeight: '120px', // Increased height for "taller" feel
+              minHeight: '120px',
               maxHeight: '400px',
               background: 'transparent',
               border: 'none',
@@ -1049,12 +1253,182 @@ export const CursorOverlay = () => {
               color: colors.textPrimary,
               fontSize: '15px',
               lineHeight: '1.6',
-              padding: '12px 16px', // Internal padding for the text
-              resize: 'none',
-              fontFamily: 'inherit',
+              padding: '12px 16px',
+              overflowY: 'auto',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
             }}
           />
         </TitaniumShell>
+      )}
+
+      {/* @ File Search Dropdown - Portal to escape overflow:hidden */}
+      {active && showFileSearch && typeof document !== 'undefined' && ReactDOM.createPortal(
+        <div
+          style={{
+            position: 'fixed',
+            bottom: (() => {
+              if (!instructionInputRef.current) return 200;
+              const rect = instructionInputRef.current.getBoundingClientRect();
+              return window.innerHeight - rect.top + 8;
+            })(),
+            left: (() => {
+              if (!instructionInputRef.current) return 100;
+              const rect = instructionInputRef.current.getBoundingClientRect();
+              return rect.left;
+            })(),
+            width: (() => {
+              if (!instructionInputRef.current) return 400;
+              const rect = instructionInputRef.current.getBoundingClientRect();
+              return rect.width - 32;
+            })(),
+            marginLeft: '16px',
+            background: '#1A1A1A',
+            border: '1px solid rgba(255,255,255,0.12)',
+            borderRadius: '12px',
+            padding: '6px',
+            maxHeight: '240px',
+            overflowY: 'auto',
+            boxShadow: '0 16px 48px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.05)',
+            zIndex: 1000000,
+          }}
+        >
+          {/* Header with Close Button */}
+          <div style={{
+            padding: '8px 12px 6px',
+            borderBottom: '1px solid rgba(255,255,255,0.06)',
+            marginBottom: '4px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+          }}>
+            <span style={{ 
+              fontSize: '10px', 
+              fontWeight: 600, 
+              color: colors.textTertiary, 
+              textTransform: 'uppercase',
+              letterSpacing: '0.5px',
+            }}>
+              Files {fileSearchQuery && `· "${fileSearchQuery}"`}
+            </span>
+            <button
+              onClick={() => {
+                setShowFileSearch(false);
+                setFileSearchResults([]);
+              }}
+              style={{
+                width: '18px',
+                height: '18px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                background: 'rgba(255,255,255,0.06)',
+                border: 'none',
+                borderRadius: '4px',
+                color: colors.textTertiary,
+                cursor: 'pointer',
+                padding: 0,
+                transition: 'all 0.15s',
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.background = 'rgba(255,255,255,0.12)';
+                e.currentTarget.style.color = colors.textSecondary;
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.background = 'rgba(255,255,255,0.06)';
+                e.currentTarget.style.color = colors.textTertiary;
+              }}
+            >
+              <X size={10} strokeWidth={2.5} />
+            </button>
+          </div>
+          
+          {fileSearchResults.length > 0 ? (
+            fileSearchResults.map((file, index) => (
+              <button
+                key={file.path}
+                onClick={() => insertFileMention(file)}
+                onMouseEnter={() => setFileSearchIndex(index)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                  width: '100%',
+                  padding: '10px 12px',
+                  background: index === fileSearchIndex ? 'rgba(255,255,255,0.08)' : 'transparent',
+                  border: 'none',
+                  borderRadius: '8px',
+                  textAlign: 'left',
+                  cursor: 'pointer',
+                  marginBottom: '2px',
+                  transition: 'background 0.1s',
+                }}
+              >
+                <div style={{
+                  width: '28px',
+                  height: '28px',
+                  borderRadius: '6px',
+                  background: file.isImage ? 'rgba(168, 85, 247, 0.15)' : 'rgba(59, 130, 246, 0.15)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                }}>
+                  {file.isImage ? (
+                    <ImageIcon size={14} style={{ color: '#A855F7' }} />
+                  ) : (
+                    <FileText size={14} style={{ color: '#3B82F6' }} />
+                  )}
+                </div>
+                <div style={{ overflow: 'hidden', flex: 1 }}>
+                  <div style={{ 
+                    color: index === fileSearchIndex ? colors.textPrimary : colors.textSecondary, 
+                    fontSize: '13px', 
+                    fontWeight: 500,
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}>
+                    {file.name}
+                  </div>
+                  <div style={{ 
+                    color: colors.textTertiary, 
+                    fontSize: '11px', 
+                    marginTop: '2px',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                  }}>
+                    {file.path}
+                  </div>
+                </div>
+                {index === fileSearchIndex && (
+                  <div style={{
+                    fontSize: '10px',
+                    color: colors.textTertiary,
+                    padding: '2px 6px',
+                    background: 'rgba(255,255,255,0.06)',
+                    borderRadius: '4px',
+                    fontFamily: 'ui-monospace, monospace',
+                  }}>
+                    ↵
+                  </div>
+                )}
+              </button>
+            ))
+          ) : (
+            <div style={{
+              padding: '16px',
+              color: colors.textTertiary,
+              fontSize: '12px',
+              textAlign: 'center',
+            }}>
+              {fileSearchQuery ? `No files matching "${fileSearchQuery}"` : 'Type to search files...'}
+            </div>
+          )}
+        </div>,
+        document.body
       )}
 
       {/* Prompt Editor Modal */}
